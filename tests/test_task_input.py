@@ -1901,3 +1901,248 @@ class TestIntrospection:
         assert task.channel_list == []
         assert task.number_of_ch == 0
         assert task.channel_info == {}
+
+
+# ---------------------------------------------------------------------------
+# 13. Settings File Loading
+# ---------------------------------------------------------------------------
+
+
+class TestSettingsFile:
+    """Tests for NITask settings file loading and serial_nr lookup — Task 13.
+
+    Covers _read_settings_file() (called from __init__) and the serial_nr
+    lookup path inside add_channel().
+    """
+
+    # Build a reusable DataFrame that exercises multiple sensor types.
+    _MOCK_DF_DATA = {
+        "serial_nr": ["SN001", "SN002"],
+        "sensitivity": [100.0, 22.5],
+        "sensitivity_units": ["mV/g", "mV/N"],
+        "units": ["g", "N"],
+    }
+
+    def _mock_df(self):
+        """Return a fresh mock settings DataFrame."""
+        import pandas as pd
+
+        return pd.DataFrame(self._MOCK_DF_DATA)
+
+    # ------------------------------------------------------------------
+    # File loading — xlsx and csv
+    # ------------------------------------------------------------------
+
+    def test_xlsx_settings_file_loads(self, mock_system):
+        """Constructor loads an .xlsx settings file via pd.read_excel().
+
+        When settings_file='sensors.xlsx' is supplied, NITask must call
+        pd.read_excel() and store the result in self.settings.
+        """
+        system = mock_system(task_names=[])
+        mock_df = self._mock_df()
+
+        with (
+            patch(
+                "nidaqwrapper.task_input.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("pandas.read_excel", return_value=mock_df) as mock_read,
+        ):
+            from nidaqwrapper.task_input import NITask
+
+            task = NITask("test_xlsx", sample_rate=25600, settings_file="sensors.xlsx")
+
+        mock_read.assert_called_once_with("sensors.xlsx")
+        assert task.settings is not None
+        assert list(task.settings.columns) == list(mock_df.columns)
+
+    def test_csv_settings_file_loads(self, mock_system):
+        """Constructor loads a .csv settings file via pd.read_csv().
+
+        When settings_file='sensors.csv' is supplied, NITask must call
+        pd.read_csv() and store the result in self.settings.
+        """
+        system = mock_system(task_names=[])
+        mock_df = self._mock_df()
+
+        with (
+            patch(
+                "nidaqwrapper.task_input.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("pandas.read_csv", return_value=mock_df) as mock_read,
+        ):
+            from nidaqwrapper.task_input import NITask
+
+            task = NITask("test_csv", sample_rate=25600, settings_file="sensors.csv")
+
+        mock_read.assert_called_once_with("sensors.csv")
+        assert task.settings is not None
+
+    # ------------------------------------------------------------------
+    # Invalid input validation
+    # ------------------------------------------------------------------
+
+    def test_invalid_extension_raises_valueerror(self, mock_system):
+        """A .txt settings file raises ValueError.
+
+        Only .xlsx and .csv extensions are supported; any other extension
+        must raise ValueError at construction time.
+        """
+        system = mock_system(task_names=[])
+
+        with (
+            patch(
+                "nidaqwrapper.task_input.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+        ):
+            from nidaqwrapper.task_input import NITask
+
+            with pytest.raises(ValueError, match=r"\.xlsx|\.csv|extension|Unsupported"):
+                NITask("test_ext", sample_rate=25600, settings_file="sensors.txt")
+
+    def test_non_string_filename_raises_typeerror(self, mock_system):
+        """An integer settings_file argument raises TypeError.
+
+        The constructor must validate that settings_file is a string before
+        attempting any file operations.
+        """
+        system = mock_system(task_names=[])
+
+        with (
+            patch(
+                "nidaqwrapper.task_input.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+        ):
+            from nidaqwrapper.task_input import NITask
+
+            with pytest.raises(TypeError, match="string|str"):
+                NITask("test_type", sample_rate=25600, settings_file=42)
+
+    # ------------------------------------------------------------------
+    # serial_nr lookup — happy path
+    # ------------------------------------------------------------------
+
+    def test_serial_nr_lookup_returns_correct_values(self, mock_system):
+        """add_channel() with serial_nr='SN001' uses calibration from settings.
+
+        The lookup returns the raw strings 'mV/g' and 'g'; add_channel()
+        resolves them through UNITS to the mock constants.  We verify the
+        resolved constants are stored, not the raw strings.
+        """
+        task = _make_task(mock_system)
+        mock_df = self._mock_df()
+        task.settings = mock_df  # inject settings DataFrame directly
+
+        with patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS):
+            task.add_channel(
+                "sensor_1",
+                device_ind=0,
+                channel_ind=0,
+                serial_nr="SN001",
+            )
+
+        cfg = task.channels["sensor_1"]
+        # sensitivity is the raw float from the DataFrame
+        assert cfg["sensitivity"] == 100.0
+        # sensitivity_units and units are resolved through MOCK_UNITS
+        assert cfg["sensitivity_units"] == MOCK_UNITS["mV/g"]
+        assert cfg["units"] == MOCK_UNITS["g"]
+
+    def test_serial_nr_sn002_force_sensor(self, mock_system):
+        """add_channel() with serial_nr='SN002' resolves force sensor calibration.
+
+        SN002 is a force sensor (mV/N / N); verify the resolved constants
+        match the ForceIEPESensorSensitivityUnits and ForceUnits mocks.
+        """
+        task = _make_task(mock_system)
+        mock_df = self._mock_df()
+        task.settings = mock_df
+
+        with patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS):
+            task.add_channel(
+                "force_sensor",
+                device_ind=0,
+                channel_ind=0,
+                serial_nr="SN002",
+            )
+
+        cfg = task.channels["force_sensor"]
+        assert cfg["sensitivity"] == 22.5
+        assert cfg["sensitivity_units"] == MOCK_UNITS["mV/N"]
+        assert cfg["units"] == MOCK_UNITS["N"]
+
+    # ------------------------------------------------------------------
+    # serial_nr lookup — error cases
+    # ------------------------------------------------------------------
+
+    def test_missing_serial_nr_raises_valueerror(self, mock_system):
+        """add_channel() with an unknown serial_nr raises ValueError.
+
+        When the settings DataFrame contains no row matching the given
+        serial_nr, _lookup_serial_nr() must raise ValueError with a
+        message identifying the missing serial number.
+        """
+        task = _make_task(mock_system)
+        task.settings = self._mock_df()
+
+        with patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS):
+            with pytest.raises(ValueError, match="MISSING|not found|serial"):
+                task.add_channel(
+                    "sensor_x",
+                    device_ind=0,
+                    channel_ind=0,
+                    serial_nr="MISSING",
+                )
+
+    def test_settings_missing_required_columns_raises_valueerror(self, mock_system):
+        """Settings DataFrame missing 'sensitivity' column raises ValueError.
+
+        _lookup_serial_nr() must validate that required columns are present
+        before attempting the row lookup.
+        """
+        import pandas as pd
+
+        task = _make_task(mock_system)
+        # DataFrame is intentionally missing the 'sensitivity' column
+        task.settings = pd.DataFrame({
+            "serial_nr": ["SN001"],
+            "sensitivity_units": ["mV/g"],
+            "units": ["g"],
+            # 'sensitivity' deliberately omitted
+        })
+
+        with patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS):
+            with pytest.raises(ValueError, match="sensitivity|missing|column"):
+                task.add_channel(
+                    "sensor_1",
+                    device_ind=0,
+                    channel_ind=0,
+                    serial_nr="SN001",
+                )
+
+    def test_serial_nr_without_settings_file_raises_valueerror(self, mock_system):
+        """add_channel() with serial_nr but no settings file loaded raises ValueError.
+
+        NITask.settings is None by default; attempting a serial_nr lookup
+        without first loading a settings file must raise ValueError with a
+        clear message directing the user to provide settings_file.
+        """
+        task = _make_task(mock_system)
+        # settings is None (no file loaded) — this is the default state
+
+        with patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS):
+            with pytest.raises(ValueError, match="settings|settings_file"):
+                task.add_channel(
+                    "sensor_1",
+                    device_ind=0,
+                    channel_ind=0,
+                    serial_nr="SN001",
+                )
