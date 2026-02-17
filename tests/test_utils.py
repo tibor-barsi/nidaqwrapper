@@ -172,3 +172,199 @@ class TestListDevices:
 
             with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
                 list_devices()
+
+
+class TestListTasks:
+    """Tests for list_tasks() function."""
+
+    def test_list_tasks_returns_list(self, mock_system):
+        """list_tasks() returns a list."""
+        system = mock_system(task_names=["MyTask"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import list_tasks
+
+            result = list_tasks()
+            assert isinstance(result, list)
+
+    def test_list_tasks_two_tasks(self, mock_system):
+        """list_tasks() returns the correct names for two saved tasks."""
+        system = mock_system(task_names=["MyInputTask", "MyOutputTask"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import list_tasks
+
+            result = list_tasks()
+            assert result == ["MyInputTask", "MyOutputTask"]
+
+    def test_list_tasks_no_tasks(self, mock_system):
+        """list_tasks() returns an empty list when no tasks are saved."""
+        system = mock_system(task_names=[])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import list_tasks
+
+            result = list_tasks()
+            assert result == []
+
+    def test_list_tasks_return_type_is_list_of_strings(self, mock_system):
+        """Every element returned by list_tasks() is a str."""
+        system = mock_system(task_names=["TaskA", "TaskB"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import list_tasks
+
+            result = list_tasks()
+            assert all(isinstance(name, str) for name in result)
+
+    def test_list_tasks_raises_without_nidaqmx(self):
+        """list_tasks() raises RuntimeError when nidaqmx is unavailable."""
+        with patch("nidaqwrapper.utils._NIDAQMX_AVAILABLE", False):
+            from nidaqwrapper.utils import list_tasks
+
+            with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
+                list_tasks()
+
+
+class TestGetTaskByName:
+    """Tests for get_task_by_name() function."""
+
+    def test_get_task_by_name_success(self, mock_system):
+        """get_task_by_name() returns the loaded task object on success."""
+        system = mock_system(task_names=["MyTask"])
+        loaded_task = system.tasks.__iter__().__next__().load.return_value
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            result = get_task_by_name("MyTask")
+            assert result is loaded_task
+
+    def test_get_task_by_name_not_found_raises_keyerror(self, mock_system):
+        """get_task_by_name() raises KeyError when no task matches the name."""
+        system = mock_system(task_names=["Other"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with pytest.raises(KeyError) as exc_info:
+                get_task_by_name("NonExistent")
+
+            error_message = str(exc_info.value)
+            assert "NonExistent" in error_message
+            assert "Other" in error_message
+
+    def test_get_task_by_name_error_200089_returns_none(self, mock_system):
+        """get_task_by_name() returns None when error code -200089 is raised.
+
+        Error -200089 means the task is already loaded elsewhere; the function
+        swallows the exception and returns None.
+        """
+        from nidaqmx.errors import DaqError
+
+        system = mock_system(task_names=["MyTask"])
+        # Retrieve the pre-built mock task from the tasks collection
+        mock_task_obj = list(system.tasks)[0]
+        mock_task_obj.load.side_effect = DaqError("Task already loaded", -200089)
+
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            result = get_task_by_name("MyTask")
+            assert result is None
+
+    def test_get_task_by_name_error_200089_logs_warning(
+        self, mock_system, caplog
+    ):
+        """get_task_by_name() logs a WARNING when error code -200089 is raised."""
+        import logging
+
+        from nidaqmx.errors import DaqError
+
+        system = mock_system(task_names=["MyTask"])
+        mock_task_obj = list(system.tasks)[0]
+        mock_task_obj.load.side_effect = DaqError("Task already loaded", -200089)
+
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with caplog.at_level(logging.WARNING, logger="nidaqwrapper.utils"):
+                get_task_by_name("MyTask")
+
+            assert any(
+                record.levelno == logging.WARNING for record in caplog.records
+            )
+
+    def test_get_task_by_name_error_201003_raises_connection_error(
+        self, mock_system
+    ):
+        """get_task_by_name() raises ConnectionError when error code -201003 is raised.
+
+        Error -201003 means the device is disconnected or in use by another
+        application.
+        """
+        from nidaqmx.errors import DaqError
+
+        system = mock_system(task_names=["MyTask"])
+        mock_task_obj = list(system.tasks)[0]
+        mock_task_obj.load.side_effect = DaqError("Device disconnected", -201003)
+
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with pytest.raises(ConnectionError) as exc_info:
+                get_task_by_name("MyTask")
+
+            error_message = str(exc_info.value)
+            assert "disconnected" in error_message or "in use" in error_message
+
+    def test_get_task_by_name_error_201003_logs_error(
+        self, mock_system, caplog
+    ):
+        """get_task_by_name() logs an ERROR when error code -201003 is raised."""
+        import logging
+
+        from nidaqmx.errors import DaqError
+
+        system = mock_system(task_names=["MyTask"])
+        mock_task_obj = list(system.tasks)[0]
+        mock_task_obj.load.side_effect = DaqError("Device disconnected", -201003)
+
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with caplog.at_level(logging.ERROR, logger="nidaqwrapper.utils"):
+                with pytest.raises(ConnectionError):
+                    get_task_by_name("MyTask")
+
+            assert any(
+                record.levelno == logging.ERROR for record in caplog.records
+            )
+
+    def test_get_task_by_name_other_error_propagates(self, mock_system):
+        """get_task_by_name() re-raises DaqError for unrecognised error codes."""
+        from nidaqmx.errors import DaqError
+
+        system = mock_system(task_names=["MyTask"])
+        mock_task_obj = list(system.tasks)[0]
+        original_error = DaqError("Unknown error", -99999)
+        mock_task_obj.load.side_effect = original_error
+
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with pytest.raises(DaqError) as exc_info:
+                get_task_by_name("MyTask")
+
+            assert exc_info.value is original_error
+
+    def test_get_task_by_name_raises_without_nidaqmx(self):
+        """get_task_by_name() raises RuntimeError when nidaqmx is unavailable."""
+        with patch("nidaqwrapper.utils._NIDAQMX_AVAILABLE", False):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
+                get_task_by_name("AnyTask")
+
+    def test_get_task_by_name_empty_name_raises_keyerror(self, mock_system):
+        """get_task_by_name('') raises KeyError — empty string is not a valid name."""
+        system = mock_system(task_names=["RealTask"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_task_by_name
+
+            with pytest.raises(KeyError):
+                get_task_by_name("")

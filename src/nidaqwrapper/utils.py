@@ -79,6 +79,112 @@ def _require_nidaqmx() -> None:
 # ---------------------------------------------------------------------------
 
 
+def list_tasks() -> list[str]:
+    """List all tasks saved in NI MAX.
+
+    Returns
+    -------
+    list[str]
+        Task name strings from NI MAX. Empty list if no tasks are saved.
+
+    Raises
+    ------
+    RuntimeError
+        If nidaqmx is not installed or NI-DAQmx drivers are unavailable.
+
+    Examples
+    --------
+    >>> list_tasks()
+    ['MyInputTask', 'MyOutputTask']
+
+    >>> list_tasks()  # no tasks saved in NI MAX
+    []
+    """
+    _require_nidaqmx()
+    system = nidaqmx.system.System.local()
+    return list(system.tasks.task_names)
+
+
+def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
+    """Load a pre-configured NI-DAQmx task from NI MAX by name.
+
+    Iterates over tasks saved in NI MAX, matches by name, and calls
+    ``.load()`` to return a ready-to-use ``nidaqmx.Task`` object.
+
+    Parameters
+    ----------
+    name : str
+        The exact name of the task as saved in NI MAX.
+
+    Returns
+    -------
+    nidaqmx.Task or None
+        The loaded task object, or ``None`` if the task is already loaded
+        by another process (error code -200089). In this case a WARNING is
+        logged and the caller is responsible for deciding how to proceed.
+
+    Raises
+    ------
+    KeyError
+        If no task with ``name`` exists in NI MAX.  The message includes
+        the requested name and a list of all available task names.
+    ConnectionError
+        If the device associated with the task is inaccessible (error code
+        -201003) — the device may be disconnected or held by another
+        application.  An ERROR is logged before raising.
+    DaqError
+        Any other NI-DAQmx error is re-raised unchanged so the caller can
+        handle hardware-specific conditions.
+    RuntimeError
+        If nidaqmx is not installed or NI-DAQmx drivers are unavailable.
+
+    Examples
+    --------
+    >>> task = get_task_by_name("MyInputTask")
+    >>> task.start()
+
+    Notes
+    -----
+    An empty string is treated as a missing task and raises ``KeyError``,
+    because NI MAX does not permit blank task names.
+    """
+    _require_nidaqmx()
+    system = nidaqmx.system.System.local()
+
+    # Collect available names up front so the KeyError message is informative.
+    # The iterator is recreated for each call to system.tasks because the mock
+    # (and the real nidaqmx API) supports multiple passes over the collection.
+    available_names = [t._name for t in system.tasks]
+
+    for task in system.tasks:
+        if task._name != name:
+            continue
+
+        try:
+            return task.load()
+        except DaqError as exc:
+            if exc.error_code == -200089:
+                logger.warning(
+                    "Task '%s' is already loaded elsewhere. Returning None.",
+                    name,
+                )
+                return None
+            if exc.error_code == -201003:
+                msg = (
+                    f"Task '{name}' cannot be accessed. The device may be "
+                    "disconnected or in use by another application. "
+                    "Check the hardware connection."
+                )
+                logger.error(msg)
+                raise ConnectionError(msg) from exc
+            raise
+
+    raise KeyError(
+        f"No task named '{name}' was found in NI MAX. "
+        f"Available tasks: {available_names}"
+    )
+
+
 def list_devices() -> list[dict[str, str]]:
     """List all NI-DAQmx compatible devices connected to the system.
 
