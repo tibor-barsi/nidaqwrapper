@@ -29,6 +29,46 @@ except ImportError:
     _NIDAQMX_AVAILABLE = False
 
 
+def _expand_port_to_line_range(lines: str) -> str:
+    """Expand a port-only spec to an explicit line range.
+
+    ``CHAN_PER_LINE`` requires line-level specifications.  When the user
+    passes a port-level spec (e.g. ``'Dev1/port0'``), this helper queries
+    the device to determine how many lines the port has and returns an
+    explicit line range string (e.g. ``'Dev1/port0/line0:7'``).
+
+    If the spec already contains ``'/line'`` it is returned unchanged.
+    """
+    if "/line" in lines:
+        return lines
+
+    # Port-only spec — query device for line count
+    # Extract device name (everything before the first '/')
+    parts = lines.split("/")
+    dev_name = parts[0]
+
+    system = nidaqmx.system.System.local()
+    dev = system.devices[dev_name]
+
+    # Find all DI lines belonging to this port
+    port_lines = [
+        l.name for l in dev.di_lines if l.name.startswith(lines + "/")
+    ]
+    if not port_lines:
+        # Try DO lines (for DigitalOutput)
+        port_lines = [
+            l.name for l in dev.do_lines if l.name.startswith(lines + "/")
+        ]
+
+    if not port_lines:
+        return lines  # No expansion possible, let nidaqmx handle the error
+
+    n_lines = len(port_lines)
+    expanded = f"{lines}/line0:{n_lines - 1}"
+    logger.debug("Expanded port spec '%s' → '%s'", lines, expanded)
+    return expanded
+
+
 class DigitalInput:
     """Programmatic digital input task supporting on-demand and clocked modes.
 
@@ -140,10 +180,11 @@ class DigitalInput:
         self.task = nidaqmx.Task()
 
         for ch_name, ch_config in self.channels.items():
+            lines = _expand_port_to_line_range(ch_config["lines"])
             self.task.di_channels.add_di_chan(
-                lines=ch_config["lines"],
+                lines=lines,
                 name_to_assign_to_lines=ch_name,
-                line_grouping=constants.LineGrouping.CHAN_FOR_ALL_LINES,
+                line_grouping=constants.LineGrouping.CHAN_PER_LINE,
             )
 
         if self.mode == "clocked":
@@ -339,10 +380,11 @@ class DigitalOutput:
         self.task = nidaqmx.Task()
 
         for ch_name, ch_config in self.channels.items():
+            lines = _expand_port_to_line_range(ch_config["lines"])
             self.task.do_channels.add_do_chan(
-                lines=ch_config["lines"],
+                lines=lines,
                 name_to_assign_to_lines=ch_name,
-                line_grouping=constants.LineGrouping.CHAN_FOR_ALL_LINES,
+                line_grouping=constants.LineGrouping.CHAN_PER_LINE,
             )
 
         if self.mode == "clocked":
@@ -367,7 +409,11 @@ class DigitalOutput:
             For multiple lines, pass a list or array of values.
         """
         if isinstance(data, np.ndarray):
-            data = data.tolist()
+            data = [bool(v) for v in data]
+        elif isinstance(data, list):
+            data = [bool(v) for v in data]
+        elif isinstance(data, int) and not isinstance(data, bool):
+            data = bool(data)
         self.task.write(data)
         self.logger.debug("DigitalOutput '%s' write complete", self.task_name)
 
@@ -395,9 +441,10 @@ class DigitalOutput:
 
         if data.ndim == 2:
             # Transpose from (n_samples, n_lines) to (n_lines, n_samples)
-            write_data = data.T.tolist()
+            transposed = data.T
+            write_data = [[bool(v) for v in row] for row in transposed]
         else:
-            write_data = data.tolist()
+            write_data = [bool(v) for v in data]
 
         self.task.write(write_data, auto_start=True)
         self.logger.debug(

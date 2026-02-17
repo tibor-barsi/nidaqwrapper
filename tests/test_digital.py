@@ -59,7 +59,7 @@ def _make_mock_nidaqmx(
 
     # Constants
     mock_nidaqmx.constants.AcquisitionType.CONTINUOUS = "CONTINUOUS"
-    mock_nidaqmx.constants.LineGrouping.CHAN_FOR_ALL_LINES = "CHAN_FOR_ALL_LINES"
+    mock_nidaqmx.constants.LineGrouping.CHAN_PER_LINE = "CHAN_PER_LINE"
     mock_nidaqmx.constants.READ_ALL_AVAILABLE = -1
 
     return mock_nidaqmx, mock_task_instance
@@ -202,7 +202,7 @@ class TestDigitalInputInitiate:
             mock_task.di_channels.add_di_chan.assert_called_once_with(
                 lines="Dev1/port0/line0",
                 name_to_assign_to_lines="btn",
-                line_grouping="CHAN_FOR_ALL_LINES",
+                line_grouping="CHAN_PER_LINE",
             )
 
     def test_on_demand_no_timing(self):
@@ -622,7 +622,7 @@ class TestDigitalOutputInitiate:
             mock_task.do_channels.add_do_chan.assert_called_once_with(
                 lines="Dev1/port1/line0",
                 name_to_assign_to_lines="led",
-                line_grouping="CHAN_FOR_ALL_LINES",
+                line_grouping="CHAN_PER_LINE",
             )
 
     def test_on_demand_no_timing(self):
@@ -682,7 +682,7 @@ class TestDigitalOutputWrite:
             mock_task.write.assert_called_once_with(True)
 
     def test_write_single_int(self):
-        """write(1) passes 1 to task.write()."""
+        """write(1) converts to True and passes to task.write()."""
         mock_nidaqmx, mock_task = _make_mock_nidaqmx()
         with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
             from nidaqwrapper.digital import DigitalOutput
@@ -692,10 +692,10 @@ class TestDigitalOutputWrite:
             do.initiate()
             do.write(1)
 
-            mock_task.write.assert_called_once_with(1)
+            mock_task.write.assert_called_once_with(True)
 
     def test_write_list(self):
-        """write([True, False, True, False]) passes list to task.write()."""
+        """write([True, False, True, False]) converts to bools and passes."""
         mock_nidaqmx, mock_task = _make_mock_nidaqmx()
         with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
             from nidaqwrapper.digital import DigitalOutput
@@ -708,7 +708,7 @@ class TestDigitalOutputWrite:
             mock_task.write.assert_called_once_with([True, False, True, False])
 
     def test_write_numpy_array(self):
-        """write(np.array([1, 0, 1, 0])) converts to list and writes."""
+        """write(np.array([1, 0, 1, 0])) converts to list of bools."""
         mock_nidaqmx, mock_task = _make_mock_nidaqmx()
         with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
             from nidaqwrapper.digital import DigitalOutput
@@ -718,7 +718,7 @@ class TestDigitalOutputWrite:
             do.initiate()
             do.write(np.array([1, 0, 1, 0]))
 
-            mock_task.write.assert_called_once_with([1, 0, 1, 0])
+            mock_task.write.assert_called_once_with([True, False, True, False])
 
     def test_write_calls_task_write(self):
         """write() delegates to task.write() with the data."""
