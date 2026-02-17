@@ -114,7 +114,203 @@ class NITask:
         """Copy of the full channel configuration dict."""
         return {k: dict(v) for k, v in self.channels.items()}
 
-    # -- Settings file loading (placeholder, implemented in Task 13) --------
+    # -- Channel configuration -----------------------------------------------
+
+    def add_channel(
+        self,
+        channel_name: str,
+        device_ind: int,
+        channel_ind: int,
+        sensitivity: float | None = None,
+        sensitivity_units: str | None = None,
+        units: str | None = None,
+        serial_nr: str | None = None,
+        scale: float | tuple[float, float] | None = None,
+        min_val: float | None = None,
+        max_val: float | None = None,
+    ) -> None:
+        """Add an analog input channel to this task.
+
+        The channel is stored in the configuration but not added to a
+        hardware task until :meth:`initiate` is called.
+
+        Parameters
+        ----------
+        channel_name : str
+            Unique name for this channel.
+        device_ind : int
+            Index into :attr:`device_list` identifying the target device.
+        channel_ind : int
+            Physical analog-input channel number on the device.
+        sensitivity : float, optional
+            Sensor sensitivity.  Required for accel/force channels
+            when *scale* is not provided.
+        sensitivity_units : str, optional
+            Key into the ``UNITS`` dict for sensor sensitivity units
+            (e.g. ``'mV/g'``, ``'mV/N'``).
+        units : str
+            Key into the ``UNITS`` dict for output measurement units
+            (e.g. ``'g'``, ``'N'``, ``'V'``).  Always required.
+        serial_nr : str, optional
+            Sensor serial number.  When provided, *sensitivity*,
+            *sensitivity_units*, and *units* are looked up from the
+            settings file.
+        scale : float or tuple[float, float], optional
+            Linear custom scale.  Float → slope with y_intercept=0.
+            Tuple → ``(slope, y_intercept)``.  When given, *sensitivity*
+            and *sensitivity_units* are not required.
+        min_val : float, optional
+            Minimum expected value.  ``0.0`` is a valid value.
+        max_val : float, optional
+            Maximum expected value.  ``0.0`` is a valid value.
+
+        Raises
+        ------
+        ValueError
+            Duplicate channel name, duplicate physical channel, out-of-range
+            device, invalid units, missing sensitivity, or missing units.
+        TypeError
+            Invalid *scale* type.
+        """
+        # -- Serial number lookup (settings file) ---------------------------
+        if serial_nr is not None and sensitivity is None:
+            if self.settings is None:
+                raise ValueError(
+                    "Cannot look up serial_nr: no settings file has been loaded. "
+                    "Pass settings_file= to the NITask constructor."
+                )
+            sensitivity, sensitivity_units, units = self._lookup_serial_nr(
+                serial_nr
+            )
+
+        # -- Basic validation -----------------------------------------------
+        if units is None:
+            raise ValueError(
+                "units must be specified. "
+                f"Valid units: {list(UNITS.keys())}"
+            )
+
+        if channel_name in self.channels:
+            raise ValueError(
+                f"Channel name '{channel_name}' already exists in this task."
+            )
+
+        if device_ind not in range(len(self.device_list)):
+            raise ValueError(
+                f"device_ind {device_ind} is out of range. "
+                f"Available devices: {self.device_list}"
+            )
+
+        for ch in self.channels.values():
+            if ch["device_ind"] == device_ind and ch["channel_ind"] == channel_ind:
+                raise ValueError(
+                    f"Physical channel ai{channel_ind} on device "
+                    f"'{self.device_list[device_ind]}' is already in use."
+                )
+
+        # -- Scale type validation ------------------------------------------
+        if scale is not None:
+            if not isinstance(scale, (int, float, tuple)):
+                raise TypeError(
+                    f"scale must be a float or tuple, got {type(scale).__name__}."
+                )
+
+        # -- Units / sensitivity validation (skip when scale given) ---------
+        if scale is None:
+            if sensitivity_units is not None and sensitivity_units not in UNITS:
+                raise ValueError(
+                    f"Invalid sensitivity_units: '{sensitivity_units}'. "
+                    f"Valid sensitivity_units: {list(UNITS.keys())}"
+                )
+            if units not in UNITS:
+                raise ValueError(
+                    f"Invalid units: '{units}'. "
+                    f"Valid units: {list(UNITS.keys())}"
+                )
+
+        # -- Resolve constants from UNITS dict ------------------------------
+        resolved_units = UNITS[units] if units in UNITS else units
+        resolved_sens_units = (
+            UNITS[sensitivity_units]
+            if sensitivity_units is not None and sensitivity_units in UNITS
+            else sensitivity_units
+        )
+
+        # -- Sensitivity required for non-voltage, non-scale channels -------
+        if scale is None:
+            is_voltage = (
+                hasattr(resolved_units, "__objclass__")
+                and resolved_units.__objclass__.__name__ == "VoltageUnits"
+            )
+            if not is_voltage:
+                if sensitivity is None:
+                    raise ValueError(
+                        "sensitivity must be specified for non-voltage "
+                        "channels when no scale is provided."
+                    )
+                if sensitivity_units is None:
+                    raise ValueError(
+                        "sensitivity_units must be specified for non-voltage "
+                        "channels when no scale is provided."
+                    )
+
+        # -- Store channel configuration ------------------------------------
+        self.channels[channel_name] = {
+            "device_ind": device_ind,
+            "channel_ind": channel_ind,
+            "sensitivity": sensitivity,
+            "sensitivity_units": resolved_sens_units,
+            "units": resolved_units,
+            "serial_nr": serial_nr,
+            "scale": scale,
+            "min_val": min_val,
+            "max_val": max_val,
+            "custom_scale_name": "",
+        }
+
+        self._logger.debug("Channel '%s' added to task '%s'.", channel_name, self.task_name)
+
+    def _lookup_serial_nr(
+        self, serial_nr: str
+    ) -> tuple[float, str, str]:
+        """Look up sensor calibration data by serial number.
+
+        Parameters
+        ----------
+        serial_nr : str
+            Sensor serial number to find in the settings DataFrame.
+
+        Returns
+        -------
+        tuple[float, str, str]
+            ``(sensitivity, sensitivity_units, units)`` from the matching row.
+
+        Raises
+        ------
+        ValueError
+            If required columns are missing, or serial_nr not found.
+        """
+        required_cols = {"serial_nr", "sensitivity", "sensitivity_units", "units"}
+        missing = required_cols - set(self.settings.columns)
+        if missing:
+            raise ValueError(
+                f"Settings file is missing required columns: {sorted(missing)}"
+            )
+
+        row = self.settings[self.settings["serial_nr"] == serial_nr]
+        if len(row) == 0:
+            raise ValueError(
+                f"Serial number '{serial_nr}' not found in settings file."
+            )
+
+        first = row.iloc[0]
+        return (
+            float(first["sensitivity"]),
+            str(first["sensitivity_units"]),
+            str(first["units"]),
+        )
+
+    # -- Settings file loading ----------------------------------------------
 
     def _read_settings_file(self, file_name: str) -> None:
         """Load sensor calibration data from a settings file.
