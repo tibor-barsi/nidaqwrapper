@@ -368,3 +368,55 @@ class TestGetTaskByName:
 
             with pytest.raises(KeyError):
                 get_task_by_name("")
+
+
+class TestGetConnectedDevices:
+    """Tests for get_connected_devices() function."""
+
+    def test_get_connected_devices_two_devices(self, mock_system):
+        """get_connected_devices() returns the name set for two connected devices."""
+        system = mock_system(
+            devices=[("cDAQ1Mod1", "NI 9234"), ("cDAQ1Mod2", "NI 9263")]
+        )
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_connected_devices
+
+            result = get_connected_devices()
+            assert result == {"cDAQ1Mod1", "cDAQ1Mod2"}
+
+    def test_get_connected_devices_no_devices(self, mock_system):
+        """get_connected_devices() returns an empty set when no devices are connected."""
+        system = mock_system(devices=[])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_connected_devices
+
+            result = get_connected_devices()
+            assert result == set()
+
+    def test_get_connected_devices_return_type_is_set(self, mock_system):
+        """get_connected_devices() always returns a set, never a list or tuple."""
+        system = mock_system(devices=[("Dev1", "NI 9234")])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_connected_devices
+
+            result = get_connected_devices()
+            assert isinstance(result, set)
+
+    def test_get_connected_devices_values_are_strings(self, mock_system):
+        """Every element in the returned set is a str."""
+        system = mock_system(
+            devices=[("cDAQ1Mod1", "NI 9234"), ("cDAQ1Mod2", "NI 9263")]
+        )
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import get_connected_devices
+
+            result = get_connected_devices()
+            assert all(isinstance(name, str) for name in result)
+
+    def test_get_connected_devices_raises_without_nidaqmx(self):
+        """get_connected_devices() raises RuntimeError when nidaqmx is unavailable."""
+        with patch("nidaqwrapper.utils._NIDAQMX_AVAILABLE", False):
+            from nidaqwrapper.utils import get_connected_devices
+
+            with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
+                get_connected_devices()

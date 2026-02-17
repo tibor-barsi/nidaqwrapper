@@ -12,4 +12,19 @@ try:
 except ImportError:
     _NIDAQMX_AVAILABLE = False
 
-__all__ = ["__version__"]
+from .utils import (
+    UNITS,
+    get_connected_devices,
+    get_task_by_name,
+    list_devices,
+    list_tasks,
+)
+
+__all__ = [
+    "__version__",
+    "UNITS",
+    "get_connected_devices",
+    "get_task_by_name",
+    "list_devices",
+    "list_tasks",
+]

@@ -185,6 +185,41 @@ def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
     )
 
 
+def get_connected_devices() -> set[str]:
+    """Return the set of currently connected NI-DAQmx device names.
+
+    Queries the local NI-DAQmx system and returns only the device name
+    strings, without product type metadata.  Useful when the caller needs
+    a fast membership check (``"cDAQ1Mod1" in get_connected_devices()``).
+
+    Returns
+    -------
+    set[str]
+        Device name strings (e.g. ``{"cDAQ1Mod1", "cDAQ1Mod2"}``).
+        Empty set if no devices are connected.
+
+    Raises
+    ------
+    RuntimeError
+        If nidaqmx is not installed or NI-DAQmx drivers are unavailable.
+
+    Examples
+    --------
+    >>> get_connected_devices()
+    {'cDAQ1Mod1', 'cDAQ1Mod2'}
+
+    >>> get_connected_devices()  # no hardware connected
+    set()
+
+    See Also
+    --------
+    list_devices : Returns full device info dicts including product type.
+    """
+    _require_nidaqmx()
+    system = nidaqmx.system.System.local()
+    return {dev.name for dev in system.devices}
+
+
 def list_devices() -> list[dict[str, str]]:
     """List all NI-DAQmx compatible devices connected to the system.
 
