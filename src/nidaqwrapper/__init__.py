@@ -13,9 +13,11 @@ from .utils import (
     list_devices,
     list_tasks,
 )
+from .task_output import NITaskOutput
 
 __all__ = [
     "__version__",
+    "NITaskOutput",
     "UNITS",
     "get_connected_devices",
     "get_task_by_name",
