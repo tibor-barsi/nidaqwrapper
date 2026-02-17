@@ -187,6 +187,7 @@ class NITaskOutput:
         # Validate actual sample rate matches requested
         actual_rate = float(self.task._timing.samp_clk_rate)
         if actual_rate != float(self.sample_rate):
+            self.clear_task()
             raise ValueError(
                 f"Sample rate {self.sample_rate} Hz is not available for this device. "
                 f"Next available sample rate is {actual_rate} Hz."
@@ -238,7 +239,7 @@ class NITaskOutput:
             internally before writing.
         """
         if signal.ndim == 2:
-            data = signal.T
+            data = np.ascontiguousarray(signal.T)
         else:
             data = signal
 

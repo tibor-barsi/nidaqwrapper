@@ -266,6 +266,18 @@ class TestInitiate:
         with pytest.raises(ValueError, match="(?i)sample rate.*not available|mismatch"):
             task_out.initiate()
 
+    def test_sample_rate_validation_failure_cleans_up_task(self):
+        """Hardware bug fix: initiate() must close nidaqmx task on rate mismatch."""
+        mock_nidaqmx = _build_mock_nidaqmx()
+        task_out, mock_daq_task = self._setup_task_for_initiate(mock_nidaqmx, sample_rate=10000)
+        mock_daq_task._timing.samp_clk_rate = 10240.0
+
+        with pytest.raises(ValueError):
+            task_out.initiate()
+
+        mock_daq_task.close.assert_called_once()
+        assert task_out.task is None
+
     def test_multiple_channels_added(self):
         mock_nidaqmx = _build_mock_nidaqmx()
         task_out, mock_daq_task = self._setup_task_for_initiate(mock_nidaqmx)
