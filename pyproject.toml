@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nidaqwrapper"
+version = "0.1.0"
+description = "Unified NI-DAQmx Python Wrapper"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.20",
+    "nidaqmx>=0.8.0",
+    "pyTrigger>=0.3.0",
+]
+
+[project.optional-dependencies]
+settings = ["pandas>=1.0", "openpyxl>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/tibor-barsi/nidaqwrapper"
+Repository = "https://github.com/tibor-barsi/nidaqwrapper"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "hardware: marks tests as requiring NI-DAQmx hardware (deselect with '-m \"not hardware\"')",
+]
+testpaths = ["tests"]
