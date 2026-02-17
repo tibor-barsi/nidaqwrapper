@@ -19,8 +19,6 @@ import numpy as np
 
 from .utils import UNITS, _require_nidaqmx
 
-logger = logging.getLogger("nidaqwrapper.task_input")
-
 try:
     import nidaqmx
     from nidaqmx import constants
@@ -261,6 +259,7 @@ class NITask:
             "sensitivity": sensitivity,
             "sensitivity_units": resolved_sens_units,
             "units": resolved_units,
+            "units_str": units,  # original string for create_lin_scale
             "serial_nr": serial_nr,
             "scale": scale,
             "min_val": min_val,
@@ -468,7 +467,7 @@ class NITask:
                 slope=slope,
                 y_intercept=y_intercept,
                 pre_scaled_units=constants.VoltageUnits.VOLTS,
-                scaled_units=cfg["units"],
+                scaled_units=cfg["units_str"],
             )
             custom_scale_name = scale_obj.name
             # Persist so the channel config reflects the created scale name

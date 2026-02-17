@@ -1651,10 +1651,8 @@ class TestClearTask:
         guard against the attribute being absent entirely.
         """
         task = _make_task(mock_system)
-        # Do NOT assign task.task — task was never initiated
-        assert not hasattr(task, "task") or task.task is None or True  # any state
-
-        # Must complete without raising
+        # Do NOT assign task.task — task was never initiated.
+        # The call below must complete without raising.
         task.clear_task()
 
 
@@ -2146,3 +2144,32 @@ class TestSettingsFile:
                     channel_ind=0,
                     serial_nr="SN001",
                 )
+
+    def test_pandas_not_installed_raises_importerror(self, mock_system):
+        """settings_file with pandas unavailable raises ImportError.
+
+        When pandas is not installed, _read_settings_file() must raise
+        ImportError with instructions to install nidaqwrapper[settings].
+        """
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_pandas(name, *args, **kwargs):
+            if name == "pandas":
+                raise ImportError("No module named 'pandas'")
+            return real_import(name, *args, **kwargs)
+
+        system = mock_system(task_names=[])
+        with (
+            patch(
+                "nidaqwrapper.task_input.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("builtins.__import__", side_effect=_no_pandas),
+        ):
+            from nidaqwrapper.task_input import NITask
+
+            with pytest.raises(ImportError, match="pandas|settings"):
+                NITask("test_nopd", sample_rate=25600, settings_file="sensors.xlsx")
