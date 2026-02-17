@@ -14,12 +14,14 @@ from .utils import (
     list_tasks,
 )
 from .digital import DigitalInput, DigitalOutput
+from .task_input import NITask
 from .task_output import NITaskOutput
 
 __all__ = [
     "__version__",
     "DigitalInput",
     "DigitalOutput",
+    "NITask",
     "NITaskOutput",
     "UNITS",
     "get_connected_devices",
