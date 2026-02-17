@@ -492,3 +492,391 @@ class TestDigitalInputClearTask:
                     raise RuntimeError("test error")
 
             mock_task.close.assert_called_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DigitalOutput Tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class TestDigitalOutputConstructor:
+    """Task group 7: DigitalOutput constructor tests."""
+
+    def test_on_demand_mode_defaults(self):
+        """DigitalOutput without sample_rate has mode='on_demand', sample_rate=None."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_ctrl")
+            assert do.task_name == "do_ctrl"
+            assert do.sample_rate is None
+            assert do.mode == "on_demand"
+            assert do.channels == {}
+
+    def test_clocked_mode(self):
+        """DigitalOutput with sample_rate=1000 has mode='clocked'."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_clocked", sample_rate=1000)
+            assert do.sample_rate == 1000
+            assert do.mode == "clocked"
+
+    def test_device_discovery(self):
+        """DigitalOutput discovers connected devices."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx(device_names=["cDAQ1Mod1", "cDAQ1Mod2"])
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_dev")
+            assert "cDAQ1Mod1" in do.device_list
+            assert "cDAQ1Mod2" in do.device_list
+
+    def test_reject_duplicate_task_name(self):
+        """DigitalOutput raises ValueError if task_name exists in NI MAX."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx(task_names=["existing_task"])
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            with pytest.raises(ValueError, match="existing_task"):
+                DigitalOutput(task_name="existing_task")
+
+
+class TestDigitalOutputAddChannel:
+    """Task group 8: DigitalOutput.add_channel() tests."""
+
+    def _make_do(self):
+        mock_nidaqmx, _ = _make_mock_nidaqmx()
+        patcher = patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system})
+        patcher.start()
+        from nidaqwrapper.digital import DigitalOutput
+
+        do = DigitalOutput(task_name="do_ch")
+        return do, patcher
+
+    def test_add_single_line(self):
+        """add_channel stores single line specification."""
+        do, patcher = self._make_do()
+        try:
+            do.add_channel("led_1", lines="Dev1/port1/line0")
+            assert "led_1" in do.channels
+            assert do.channels["led_1"]["lines"] == "Dev1/port1/line0"
+        finally:
+            patcher.stop()
+
+    def test_add_line_range(self):
+        """add_channel stores line range specification."""
+        do, patcher = self._make_do()
+        try:
+            do.add_channel("leds", lines="Dev1/port1/line0:7")
+            assert do.channels["leds"]["lines"] == "Dev1/port1/line0:7"
+        finally:
+            patcher.stop()
+
+    def test_add_full_port(self):
+        """add_channel stores full port specification."""
+        do, patcher = self._make_do()
+        try:
+            do.add_channel("port1", lines="Dev1/port1")
+            assert do.channels["port1"]["lines"] == "Dev1/port1"
+        finally:
+            patcher.stop()
+
+    def test_reject_duplicate_name(self):
+        """add_channel raises ValueError on duplicate channel name."""
+        do, patcher = self._make_do()
+        try:
+            do.add_channel("led_1", lines="Dev1/port1/line0")
+            with pytest.raises(ValueError, match="led_1"):
+                do.add_channel("led_1", lines="Dev1/port1/line1")
+        finally:
+            patcher.stop()
+
+    def test_reject_duplicate_lines(self):
+        """add_channel raises ValueError when lines are already in use."""
+        do, patcher = self._make_do()
+        try:
+            do.add_channel("ch1", lines="Dev1/port1/line0")
+            with pytest.raises(ValueError, match="Dev1/port1/line0"):
+                do.add_channel("ch2", lines="Dev1/port1/line0")
+        finally:
+            patcher.stop()
+
+
+class TestDigitalOutputInitiate:
+    """Task group 9: DigitalOutput.initiate() tests."""
+
+    def test_on_demand_creates_task_and_adds_do_channels(self):
+        """On-demand initiate creates task and adds DO channels."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_init")
+            do.add_channel("led", lines="Dev1/port1/line0")
+            do.initiate()
+
+            mock_nidaqmx.Task.assert_called_once()
+            mock_task.do_channels.add_do_chan.assert_called_once_with(
+                lines="Dev1/port1/line0",
+                name_to_assign_to_lines="led",
+                line_grouping="CHAN_FOR_ALL_LINES",
+            )
+
+    def test_on_demand_no_timing(self):
+        """On-demand initiate does NOT configure timing."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_nt")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            mock_task.timing.cfg_samp_clk_timing.assert_not_called()
+
+    def test_clocked_configures_timing(self):
+        """Clocked initiate configures timing."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_clk", sample_rate=1000)
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            mock_task.timing.cfg_samp_clk_timing.assert_called_once_with(
+                rate=1000,
+                sample_mode="CONTINUOUS",
+            )
+
+    def test_clocked_start_task(self):
+        """Clocked initiate with start_task=True starts the task."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_st", sample_rate=1000)
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate(start_task=True)
+
+            mock_task.start.assert_called_once()
+
+
+class TestDigitalOutputWrite:
+    """Task group 10: DigitalOutput.write() (on-demand) tests."""
+
+    def test_write_single_bool(self):
+        """write(True) passes True to task.write()."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wb")
+            do.add_channel("led", lines="Dev1/port1/line0")
+            do.initiate()
+            do.write(True)
+
+            mock_task.write.assert_called_once_with(True)
+
+    def test_write_single_int(self):
+        """write(1) passes 1 to task.write()."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wi")
+            do.add_channel("led", lines="Dev1/port1/line0")
+            do.initiate()
+            do.write(1)
+
+            mock_task.write.assert_called_once_with(1)
+
+    def test_write_list(self):
+        """write([True, False, True, False]) passes list to task.write()."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wl")
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+            do.initiate()
+            do.write([True, False, True, False])
+
+            mock_task.write.assert_called_once_with([True, False, True, False])
+
+    def test_write_numpy_array(self):
+        """write(np.array([1, 0, 1, 0])) converts to list and writes."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wn")
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+            do.initiate()
+            do.write(np.array([1, 0, 1, 0]))
+
+            mock_task.write.assert_called_once_with([1, 0, 1, 0])
+
+    def test_write_calls_task_write(self):
+        """write() delegates to task.write() with the data."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wd")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+            do.write(False)
+
+            mock_task.write.assert_called_once()
+
+
+class TestDigitalOutputWriteContinuous:
+    """Task group 11: DigitalOutput.write_continuous() tests."""
+
+    def test_multi_line_2d_transposed(self):
+        """write_continuous() transposes (n_samples, n_lines) to (n_lines, n_samples)."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wc2d", sample_rate=1000)
+            do.add_channel("ch", lines="Dev1/port1/line0:3")
+            do.initiate()
+
+            data = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0]])  # (3, 4)
+            do.write_continuous(data)
+
+            call_args = mock_task.write.call_args
+            written_data = call_args[0][0]
+            assert len(written_data) == 4  # n_lines
+            assert len(written_data[0]) == 3  # n_samples
+            assert call_args[1]["auto_start"] is True
+
+    def test_single_line_1d_written_directly(self):
+        """write_continuous() writes 1D array directly for single line."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wc1d", sample_rate=1000)
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            data = np.array([1, 0, 1, 0, 1])
+            do.write_continuous(data)
+
+            call_args = mock_task.write.call_args
+            written_data = call_args[0][0]
+            assert written_data == [1, 0, 1, 0, 1]
+
+    def test_raises_in_on_demand_mode(self):
+        """write_continuous() raises RuntimeError in on-demand mode."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wcod")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            with pytest.raises(RuntimeError, match="clocked mode"):
+                do.write_continuous(np.array([1, 0, 1]))
+
+    def test_auto_start_true(self):
+        """write_continuous() calls task.write() with auto_start=True."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_wcas", sample_rate=1000)
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            do.write_continuous(np.array([1, 0, 1]))
+
+            call_args = mock_task.write.call_args
+            assert call_args[1]["auto_start"] is True
+
+
+class TestDigitalOutputClearTask:
+    """Task group 12: DigitalOutput.clear_task() and context manager tests."""
+
+    def test_clear_task_closes_initiated_task(self):
+        """clear_task() calls task.close() on an initiated task."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_clear")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+            do.clear_task()
+
+            mock_task.close.assert_called_once()
+            assert do.task is None
+
+    def test_clear_task_multiple_calls(self):
+        """clear_task() called twice does not raise."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_multi")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+            do.clear_task()
+            do.clear_task()  # Should not raise
+
+    def test_clear_task_never_initiated(self):
+        """clear_task() on a never-initiated task does not raise."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_noinit")
+            do.clear_task()  # Should not raise
+
+    def test_context_manager_enter_returns_self(self):
+        """__enter__ returns the DigitalOutput instance."""
+        mock_nidaqmx, _ = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_ctx")
+            with do as ctx:
+                assert ctx is do
+
+    def test_context_manager_exit_calls_clear_task(self):
+        """__exit__ calls clear_task()."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_exit")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            with do:
+                pass
+
+            mock_task.close.assert_called_once()
+
+    def test_context_manager_cleanup_on_exception(self):
+        """__exit__ still calls clear_task() when exception occurs."""
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_exc")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+
+            with pytest.raises(RuntimeError):
+                with do:
+                    raise RuntimeError("test error")
+
+            mock_task.close.assert_called_once()
