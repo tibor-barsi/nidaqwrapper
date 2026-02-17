@@ -170,13 +170,17 @@ def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
                 )
                 return None
             if exc.error_code == -201003:
-                msg = (
+                logger.error(
+                    "Task '%s' cannot be accessed. The device may be "
+                    "disconnected or in use by another application. "
+                    "Check the hardware connection.",
+                    name,
+                )
+                raise ConnectionError(
                     f"Task '{name}' cannot be accessed. The device may be "
                     "disconnected or in use by another application. "
                     "Check the hardware connection."
-                )
-                logger.error(msg)
-                raise ConnectionError(msg) from exc
+                ) from exc
             raise
 
     raise KeyError(
@@ -222,10 +226,6 @@ def get_connected_devices() -> set[str]:
 
 def list_devices() -> list[dict[str, str]]:
     """List all NI-DAQmx compatible devices connected to the system.
-
-    Parameters
-    ----------
-    None
 
     Returns
     -------

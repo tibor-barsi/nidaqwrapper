@@ -6,12 +6,6 @@ __version__ = "0.1.0"
 
 logger = logging.getLogger("nidaqwrapper")
 
-try:
-    import nidaqmx
-    _NIDAQMX_AVAILABLE = True
-except ImportError:
-    _NIDAQMX_AVAILABLE = False
-
 from .utils import (
     UNITS,
     get_connected_devices,

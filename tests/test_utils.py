@@ -286,7 +286,8 @@ class TestGetTaskByName:
                 get_task_by_name("MyTask")
 
             assert any(
-                record.levelno == logging.WARNING for record in caplog.records
+                record.levelno == logging.WARNING and "MyTask" in record.message
+                for record in caplog.records
             )
 
     def test_get_task_by_name_error_201003_raises_connection_error(
@@ -332,7 +333,8 @@ class TestGetTaskByName:
                     get_task_by_name("MyTask")
 
             assert any(
-                record.levelno == logging.ERROR for record in caplog.records
+                record.levelno == logging.ERROR and "MyTask" in record.message
+                for record in caplog.records
             )
 
     def test_get_task_by_name_other_error_propagates(self, mock_system):
