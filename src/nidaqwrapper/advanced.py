@@ -1,0 +1,901 @@
+"""Multi-task synchronized NI-DAQmx acquisition.
+
+Provides the :class:`NIAdvanced` class, which consolidates OpenEOL's
+NIAdvanced implementation with four bug fixes applied.  It supports
+synchronizing multiple NI-DAQmx tasks via hardware triggers (FINITE mode)
+or a single-task software trigger using pyTrigger (CONTINUOUS mode).
+
+Bug Fixes Applied (relative to OpenEOL base_advanced.py)
+---------------------------------------------------------
+1. Error codes compared as integers, not strings (was ``== "-200088"``).
+2. ``trigger_type`` defaults to ``'software'`` in ``__init__`` — avoids
+   ``AttributeError`` in ``_validate_acquisition_mode`` when no hardware
+   triggers are present.
+3. ``task.start()`` called before the read loop in
+   ``acquire_with_software_trigger`` — OpenEOL omitted this, causing reads
+   from a task that was never started.
+4. ``configure()`` uses ``None`` default arguments instead of mutable ``[]``
+   defaults, preventing shared-state bugs across repeated calls.
+
+Notes
+-----
+NIAdvanced is **not** a subclass of NIDAQWrapper (NFR-8.2).  It is an
+independent class that operates on pre-configured nidaqmx tasks.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+
+import numpy as np
+
+from .utils import get_connected_devices, get_task_by_name
+from .task_input import NITask
+from .task_output import NITaskOutput
+
+logger = logging.getLogger("nidaqwrapper.advanced")
+
+try:
+    import nidaqmx
+    from nidaqmx.constants import READ_ALL_AVAILABLE
+    from nidaqmx.errors import DaqError
+
+    _NIDAQMX_AVAILABLE = True
+except ImportError:
+    _NIDAQMX_AVAILABLE = False
+    DaqError = Exception  # type: ignore[misc,assignment]
+
+try:
+    from pyTrigger import pyTrigger
+
+    _PYTRIGGER_AVAILABLE = True
+except ImportError:
+    _PYTRIGGER_AVAILABLE = False
+    pyTrigger = None  # type: ignore[assignment,misc]
+
+
+# ---------------------------------------------------------------------------
+# Error codes (integers — bug fix #1)
+# ---------------------------------------------------------------------------
+
+_DAQ_ERROR_INVALID_TASK = -200088
+_DAQ_ERROR_NO_CHANNELS = -200478
+
+
+class NIAdvanced:
+    """Multi-task synchronized NI-DAQmx acquisition.
+
+    Supports multiple input and output tasks with hardware trigger
+    synchronization (FINITE acquisition mode) or single-task software
+    triggering via pyTrigger (CONTINUOUS acquisition mode).
+
+    Parameters
+    ----------
+    None
+        All configuration is done via :meth:`configure`.
+
+    Attributes
+    ----------
+    input_tasks : list
+        Resolved ``nidaqmx.task.Task`` objects for analog input.
+    output_tasks : list
+        Resolved ``nidaqmx.task.Task`` objects for analog output.
+    trigger_type : str
+        Either ``'software'`` or ``'hardware'``.  Defaults to ``'software'``
+        (bug fix #2 — OpenEOL omitted this default).
+    required_devices : set
+        Device names that must be present for :meth:`ping` to succeed.
+    _configured : bool
+        True after a successful :meth:`configure` call.
+    _connected : bool
+        True after a successful :meth:`connect` call.
+
+    Examples
+    --------
+    >>> adv = NIAdvanced()
+    >>> adv.configure(input_tasks=[task1, task2])
+    True
+    >>> adv.connect()
+    True
+    >>> adv.set_trigger(n_samples=25600, trigger_channel=0, trigger_level=0.5)
+    >>> data = adv.acquire()
+    """
+
+    def __init__(self) -> None:
+        self.input_tasks: list = []
+        self.output_tasks: list = []
+        self.trigger_type: str = "software"  # Bug fix #2
+        self.required_devices: set = set()
+        self._configured: bool = False
+        self._connected: bool = False
+        self._lock: threading.RLock = threading.RLock()
+        self.trigger = None
+        self._trigger_is_set: bool = False
+        self.input_channels: list | None = None
+        self.input_sample_rate: float | None = None
+
+    # -----------------------------------------------------------------------
+    # Public lifecycle
+    # -----------------------------------------------------------------------
+
+    def configure(
+        self,
+        input_tasks: list | None = None,  # Bug fix #4 — no mutable default
+        output_tasks: list | None = None,
+    ) -> bool:
+        """Validate and resolve task lists for synchronized acquisition.
+
+        Runs the full validation pipeline sequentially.  Stores resolved
+        task lists on the instance only when all validation passes.
+
+        Parameters
+        ----------
+        input_tasks : list or None, optional
+            Input (acquisition) tasks.  Each element may be a
+            ``nidaqmx.task.Task``, :class:`NITask`, :class:`NITaskOutput`,
+            or ``str`` (task name in NI MAX).  Default is an empty list.
+        output_tasks : list or None, optional
+            Output (generation) tasks.  Same accepted types as
+            *input_tasks*.  Default is an empty list.
+
+        Returns
+        -------
+        bool
+            ``True`` when all validation passes and tasks are stored.
+            ``False`` when any validation step fails.
+
+        Raises
+        ------
+        TypeError
+            If *input_tasks* or *output_tasks* are not lists, or contain
+            objects of unsupported types.
+        """
+        # Bug fix #4 — create fresh lists, never share mutable defaults
+        if input_tasks is None:
+            input_tasks = []
+        if output_tasks is None:
+            output_tasks = []
+
+        success = True
+
+        # Step 1: type-check before any resolution
+        success &= self._validate_types(input_tasks, output_tasks)
+        if not success:
+            return False
+
+        # Steps 2-3: resolve all task representations to nidaqmx.task.Task
+        resolved_input = self._resolve_tasks(input_tasks)
+        resolved_output = self._resolve_tasks(output_tasks)
+
+        # Steps 4-5: are resolved tasks valid and open?
+        success &= self._validate_validity(resolved_input)
+        success &= self._validate_validity(resolved_output)
+
+        # Steps 6-7: all tasks within a group share the same sample rate?
+        success &= self._validate_sample_rates(resolved_input)
+        success &= self._validate_sample_rates(resolved_output)
+
+        # Steps 8-9: clock configuration identical within each group?
+        success &= self._validate_timing(resolved_input)
+        success &= self._validate_timing(resolved_output)
+
+        # Steps 10-11: triggers consistent? sets self.trigger_type
+        success &= self._validate_triggers(resolved_input)
+        success &= self._validate_triggers(resolved_output)
+
+        # Steps 12-13: acquisition mode compatible with trigger type?
+        success &= self._validate_acquisition_mode(resolved_input)
+        success &= self._validate_acquisition_mode(resolved_output)
+
+        if not success:
+            return False
+
+        # Store copies so each configure() call produces new list objects
+        # (prevents cross-call state sharing — bug fix #4 intent)
+        self.input_tasks = list(resolved_input)
+        self.output_tasks = list(resolved_output)
+
+        # Cache channel and rate metadata from the first input task
+        if resolved_input:
+            self.input_channels = resolved_input[0].channel_names
+            self.input_sample_rate = resolved_input[0].timing.samp_clk_rate
+
+        self._define_required_devices()
+        self._configured = True
+        logger.info("NIAdvanced configured successfully.")
+        return True
+
+    def connect(self) -> bool:
+        """Connect to NI hardware and verify all required devices are present.
+
+        Discovers device requirements from all configured tasks, then calls
+        :meth:`ping` to confirm physical availability.
+
+        Returns
+        -------
+        bool
+            ``True`` when all required devices respond.  ``False`` otherwise.
+        """
+        with self._lock:
+            self._define_required_devices()
+            result = self.ping()
+            if result:
+                self._connected = True
+                logger.info("NIAdvanced connected.")
+            else:
+                logger.error("NIAdvanced connection failed: device(s) not found.")
+            return result
+
+    def disconnect(self) -> bool:
+        """Close all input and output tasks and release hardware resources.
+
+        Safe to call multiple times (idempotent).
+
+        Returns
+        -------
+        bool
+            Always ``True``.
+        """
+        with self._lock:
+            for task in self.input_tasks:
+                try:
+                    task.close()
+                except Exception as exc:
+                    logger.warning("Error closing input task: %s", exc)
+
+            for task in self.output_tasks:
+                try:
+                    task.close()
+                except Exception as exc:
+                    logger.warning("Error closing output task: %s", exc)
+
+            self._connected = False
+            logger.info("NIAdvanced disconnected.")
+            return True
+
+    def ping(self) -> bool:
+        """Check that all required NI-DAQmx devices are currently connected.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            ``True`` when every device in :attr:`required_devices` is found
+            in the connected-device set.  ``True`` also when
+            :attr:`required_devices` is empty.
+        """
+        connected = get_connected_devices()
+        if self.required_devices.issubset(connected):
+            logger.debug("Ping OK: all required devices present.")
+            return True
+        missing = self.required_devices - connected
+        logger.error("Ping failed: missing devices %s", missing)
+        return False
+
+    # -----------------------------------------------------------------------
+    # Acquisition
+    # -----------------------------------------------------------------------
+
+    def acquire(self) -> dict | np.ndarray:
+        """Acquire data, dispatching to hardware or software trigger path.
+
+        Uses the RLock to ensure thread safety during hardware access.
+
+        Returns
+        -------
+        dict or numpy.ndarray
+            Result from :meth:`acquire_with_hardware_trigger` (dict) or
+            :meth:`acquire_with_software_trigger` (dict or ndarray).
+        """
+        with self._lock:
+            if self.trigger_type == "hardware":
+                return self.acquire_with_hardware_trigger()
+            return self.acquire_with_software_trigger()
+
+    def acquire_with_hardware_trigger(self) -> dict:
+        """Acquire finite data from all input tasks using a hardware trigger.
+
+        All tasks are started first (they arm and wait for the trigger),
+        then data is read from each task after the trigger fires, then all
+        tasks are stopped.
+
+        Returns
+        -------
+        dict
+            Nested dict with structure
+            ``{task_name: {channel_name: numpy.ndarray}}``.
+            Each array contains the samples for one channel.
+
+        Notes
+        -----
+        The read uses :data:`READ_ALL_AVAILABLE` because FINITE-mode tasks
+        have a known sample count configured via ``samps_per_chan``.
+        Single-channel tasks return 1-D data from nidaqmx; this method
+        normalises all outputs to 1-D NumPy arrays keyed by channel name.
+        """
+        acquired_data: dict = {}
+
+        # Start all tasks before reading — they arm and wait for the trigger.
+        for task in self.input_tasks:
+            task.start()
+
+        for task in self.input_tasks:
+            raw = task.read(number_of_samples_per_channel=READ_ALL_AVAILABLE)
+            channel_names = task.channel_names
+            channel_data: dict = {}
+
+            raw_array = np.array(raw)
+            if raw_array.ndim == 1:
+                # Single-channel: nidaqmx returns a 1-D list
+                channel_data[channel_names[0]] = raw_array
+            else:
+                # Multi-channel: shape is (n_channels, n_samples)
+                for channel_name, signal in zip(channel_names, raw_array):
+                    channel_data[channel_name] = np.array(signal)
+
+            acquired_data[task.name] = channel_data
+
+        for task in self.input_tasks:
+            task.stop()
+
+        return acquired_data
+
+    def acquire_with_software_trigger(self, return_dict: bool = True) -> dict | np.ndarray:
+        """Acquire data using pyTrigger on a single input task.
+
+        Reads data in a loop, feeding it to the pyTrigger ring buffer until
+        the trigger condition is satisfied.
+
+        Parameters
+        ----------
+        return_dict : bool, optional
+            When ``True`` (default), return a dict mapping each channel name
+            to its data array, plus a ``'time'`` key.
+            When ``False``, return the raw 2-D NumPy array from
+            ``trigger.get_data()``.
+
+        Returns
+        -------
+        dict or numpy.ndarray
+            Dict with ``{channel_name: ndarray, 'time': ndarray}`` when
+            *return_dict* is ``True``.  Otherwise a 2-D ndarray of shape
+            ``(n_samples, n_channels)``.
+
+        Raises
+        ------
+        ValueError
+            If more than one input task is configured (software triggering
+            is single-task only — reads are sequential and cannot synchronise
+            multiple tasks).
+        """
+        if len(self.input_tasks) > 1:
+            raise ValueError(
+                "Software trigger can only be used with one input task. "
+                f"Got {len(self.input_tasks)} tasks. Use hardware triggers "
+                "for multi-task acquisition."
+            )
+
+        if self.trigger is None:
+            raise RuntimeError(
+                "set_trigger() must be called before acquire(). "
+                "Configure the trigger parameters first."
+            )
+
+        task = self.input_tasks[0]
+
+        self._reset_trigger()
+
+        # Bug fix #3 — start the task before attempting any reads.
+        # OpenEOL's base_advanced.py omitted this call, so reads were issued
+        # against a task that was never started.
+        task.start()
+
+        # Flush stale samples from the hardware buffer before acquisition.
+        task.read(number_of_samples_per_channel=READ_ALL_AVAILABLE, timeout=0.5)
+
+        # Main acquisition loop — read until pyTrigger reports done.
+        while not self.trigger.finished:
+            raw_data = np.array(
+                task.read(number_of_samples_per_channel=READ_ALL_AVAILABLE, timeout=0.5)
+            )
+            if raw_data.ndim == 1:
+                # Single channel: reshape to (1, n_samples) then transpose
+                raw_data = raw_data[np.newaxis, :]
+
+            # pyTrigger expects (n_samples, n_channels)
+            data = raw_data.T
+            self.trigger.add_data(data)
+
+        time.sleep(0.05)
+        task.stop()
+
+        if return_dict:
+            data_arr = self.trigger.get_data()
+            result: dict = {}
+            channels = self.input_channels or task.channel_names
+            for i, channel_name in enumerate(channels):
+                result[channel_name] = data_arr[:, i]
+            result["time"] = (
+                np.arange(data_arr.shape[0]) / self.input_sample_rate
+            )
+            return result
+
+        return self.trigger.get_data()
+
+    # -----------------------------------------------------------------------
+    # Trigger management
+    # -----------------------------------------------------------------------
+
+    def set_trigger(
+        self,
+        n_samples: int,
+        trigger_channel: int,
+        trigger_level: float,
+        trigger_type: str = "abs",
+        presamples: int = 0,
+    ) -> None:
+        """Configure the pyTrigger for software-triggered acquisition.
+
+        Parameters
+        ----------
+        n_samples : int
+            Number of samples to acquire after the trigger event.
+        trigger_channel : int
+            Index of the channel to monitor for the trigger condition.
+        trigger_level : float
+            Threshold level that activates the trigger.
+        trigger_type : str, optional
+            Trigger detection mode.  Passed directly to ``pyTrigger``.
+            Default is ``'abs'``.
+        presamples : int, optional
+            Number of samples to retain before the trigger event.
+            Default is 0.
+
+        Raises
+        ------
+        ValueError
+            If no input tasks are configured (channel count cannot be
+            determined).
+        """
+        if not self.input_tasks:
+            raise ValueError(
+                "No input tasks configured. Call configure() with at least "
+                "one input task before setting a trigger."
+            )
+
+        n_channels = len(self.input_tasks[0].channel_names)
+        sample_rate = self.input_tasks[0].timing.samp_clk_rate
+
+        self.trigger = pyTrigger(
+            n_samples,
+            n_channels,
+            channel=trigger_channel,
+            trigger_type=trigger_type,
+            level=trigger_level,
+            presamples=presamples,
+        )
+        self._trigger_is_set = True
+        logger.debug(
+            "Trigger set: n_samples=%d, channel=%d, level=%s, type=%s",
+            n_samples,
+            trigger_channel,
+            trigger_level,
+            trigger_type,
+        )
+
+    def _reset_trigger(self) -> None:
+        """Reset the pyTrigger instance to its initial state.
+
+        Called at the start of each software-triggered acquisition so that
+        previously accumulated data does not bleed into the new measurement.
+        """
+        if self.trigger is not None:
+            self.trigger.reset()
+        logger.debug("Trigger reset.")
+
+    # -----------------------------------------------------------------------
+    # Device management
+    # -----------------------------------------------------------------------
+
+    def _define_required_devices(self) -> None:
+        """Collect device names from all configured tasks into :attr:`required_devices`.
+
+        Iterates over both input and output tasks, extracting device names
+        from each task's ``.devices`` attribute and storing the union in
+        :attr:`required_devices`.
+        """
+        self.required_devices = set()
+        for task in self.input_tasks:
+            self.required_devices.update(self._get_task_devices(task))
+        for task in self.output_tasks:
+            self.required_devices.update(self._get_task_devices(task))
+        logger.debug("Required devices: %s", self.required_devices)
+
+    def _get_task_devices(self, task) -> set:
+        """Return the set of device names used by a nidaqmx task.
+
+        Parameters
+        ----------
+        task : nidaqmx.task.Task
+            The task to inspect.
+
+        Returns
+        -------
+        set
+            Device name strings extracted from ``task.devices``.
+        """
+        return {dev.name for dev in task.devices}
+
+    # -----------------------------------------------------------------------
+    # Validation pipeline (all operate on nidaqmx.task.Task only)
+    # -----------------------------------------------------------------------
+
+    def _validate_types(
+        self, input_tasks: list, output_tasks: list
+    ) -> bool:
+        """Validate that task lists contain only supported task types.
+
+        Parameters
+        ----------
+        input_tasks : list
+            Candidate input tasks.
+        output_tasks : list
+            Candidate output tasks.
+
+        Returns
+        -------
+        bool
+            ``True`` when both lists are valid.
+
+        Raises
+        ------
+        TypeError
+            If either argument is not a list, or if any element is not a
+            ``str``, :class:`NITask`, :class:`NITaskOutput`, or
+            ``nidaqmx.task.Task``.
+        """
+        if not isinstance(input_tasks, list):
+            raise TypeError(
+                f"input_tasks must be a list, got {type(input_tasks).__name__}."
+            )
+        if not isinstance(output_tasks, list):
+            raise TypeError(
+                f"output_tasks must be a list, got {type(output_tasks).__name__}."
+            )
+
+        for task_list, label in ((input_tasks, "input"), (output_tasks, "output")):
+            for task in task_list:
+                if not self._is_valid_task_type(task):
+                    raise TypeError(
+                        f"All {label}_tasks must be nidaqmx.task.Task, NITask, "
+                        f"NITaskOutput, or str. Got {type(task).__name__}."
+                    )
+
+        return True
+
+    def _is_valid_task_type(self, task: object) -> bool:
+        """Return True when *task* is one of the four supported types.
+
+        Parameters
+        ----------
+        task : object
+            Object to inspect.
+
+        Returns
+        -------
+        bool
+        """
+        if isinstance(task, (str, NITask, NITaskOutput)):
+            return True
+        # nidaqmx may not be installed; guard the isinstance check
+        if _NIDAQMX_AVAILABLE and isinstance(task, nidaqmx.task.Task):
+            return True
+        return False
+
+    def _resolve_tasks(self, tasks: list) -> list:
+        """Convert mixed task representations to ``nidaqmx.task.Task`` objects.
+
+        Accepts four types and resolves each:
+
+        - ``str``           → :func:`get_task_by_name`
+        - :class:`NITask`   → ``ni_task.initiate(start_task=False)`` if needed
+        - :class:`NITaskOutput` → ``ni_task_out.initiate()`` if needed
+        - ``nidaqmx.task.Task`` → passed through unchanged
+
+        Parameters
+        ----------
+        tasks : list
+            Mixed list of task representations.
+
+        Returns
+        -------
+        list
+            List of resolved ``nidaqmx.task.Task`` objects.
+
+        Raises
+        ------
+        TypeError
+            If any element is not one of the four supported types.
+        """
+        resolved = []
+        for task in tasks:
+            if isinstance(task, str):
+                resolved.append(get_task_by_name(task))
+
+            elif isinstance(task, NITask):
+                if task.task is None:
+                    task.initiate(start_task=False)
+                resolved.append(task.task)
+
+            elif isinstance(task, NITaskOutput):
+                if task.task is None:
+                    task.initiate()
+                resolved.append(task.task)
+
+            elif _NIDAQMX_AVAILABLE and isinstance(task, nidaqmx.task.Task):
+                resolved.append(task)
+
+            else:
+                raise TypeError(
+                    f"Task must be nidaqmx.task.Task, NITask, NITaskOutput, "
+                    f"or str. Got {type(task).__name__}."
+                )
+
+        return resolved
+
+    def _validate_validity(self, tasks: list) -> bool:
+        """Check that each task is open and has at least one channel.
+
+        Parameters
+        ----------
+        tasks : list
+            Resolved ``nidaqmx.task.Task`` objects.
+
+        Returns
+        -------
+        bool
+            ``True`` when every task passes both checks.  ``False`` when a
+            task is invalid (error code ``-200088``) or has no channels
+            (error code ``-200478``).
+
+        Raises
+        ------
+        DaqError
+            Any DaqError with an unrecognised error code is re-raised.
+
+        Notes
+        -----
+        Error codes are compared as **integers** (bug fix #1).  OpenEOL
+        compared them as strings (``== "-200088"``), which always evaluated
+        to ``False``.
+        """
+        for task in tasks:
+            # Check the task handle is still valid
+            try:
+                task.is_task_done()
+            except DaqError as exc:
+                # Bug fix #1 — integer comparison, not string
+                if exc.error_code == _DAQ_ERROR_INVALID_TASK:
+                    logger.error(
+                        "Task is invalid or does not exist (error %d).",
+                        exc.error_code,
+                    )
+                    return False
+                raise
+
+            # Check the task has at least one channel
+            try:
+                _ = task.channel_names
+            except DaqError as exc:
+                if exc.error_code == _DAQ_ERROR_NO_CHANNELS:
+                    logger.error(
+                        "Task has no channels configured (error %d).",
+                        exc.error_code,
+                    )
+                    return False
+                raise
+
+        logger.debug("All tasks are valid.")
+        return True
+
+    def _validate_sample_rates(self, tasks: list) -> bool:
+        """Verify all tasks share the same sample clock rate.
+
+        Parameters
+        ----------
+        tasks : list
+            Resolved ``nidaqmx.task.Task`` objects.
+
+        Returns
+        -------
+        bool
+            ``True`` when all tasks use the same rate, or when fewer than
+            two tasks are present.
+        """
+        if len(tasks) <= 1:
+            return True
+
+        rates = {task.timing.samp_clk_rate for task in tasks}
+        if len(rates) > 1:
+            logger.error(
+                "All tasks must share the same sample rate. Found: %s", rates
+            )
+            return False
+
+        logger.debug("Sample rate consistent: %s Hz", rates.pop())
+        return True
+
+    def _validate_timing(self, tasks: list) -> bool:
+        """Verify all tasks share identical clock source and timing settings.
+
+        Compares the frozenset of ``{clock_source, clock_rate,
+        samples_per_channel}`` dicts across tasks.
+
+        Parameters
+        ----------
+        tasks : list
+            Resolved ``nidaqmx.task.Task`` objects.
+
+        Returns
+        -------
+        bool
+            ``True`` when all tasks have identical timing configuration, or
+            when fewer than two tasks are present.
+        """
+        if len(tasks) <= 1:
+            return True
+
+        configs: set = set()
+        for task in tasks:
+            cfg = {
+                "clock_source": task.timing.samp_clk_src,
+                "clock_rate": task.timing.samp_clk_rate,
+                "samples_per_channel": task.timing.samp_quant_samp_per_chan,
+            }
+            configs.add(frozenset(cfg.items()))
+
+        if len(configs) > 1:
+            logger.error(
+                "All tasks must have identical timing configuration. Found: %s",
+                configs,
+            )
+            return False
+
+        logger.debug("Timing configuration consistent.")
+        return True
+
+    def _validate_triggers(self, tasks: list) -> bool:
+        """Check that all tasks share the same start trigger.
+
+        Sets :attr:`trigger_type` to ``'hardware'`` when hardware triggers
+        are found, or ``'software'`` when no triggers are configured (bug
+        fix #2 — OpenEOL only set ``'hardware'`` and left ``trigger_type``
+        undefined for the software path).
+
+        Parameters
+        ----------
+        tasks : list
+            Resolved ``nidaqmx.task.Task`` objects.
+
+        Returns
+        -------
+        bool
+            ``True`` when all tasks share the same trigger type and source,
+            or when fewer than two tasks are present.  ``False`` when trigger
+            types or sources differ across tasks.
+        """
+        if len(tasks) <= 1:
+            return True
+
+        # Collect trigger type names across all tasks
+        trig_type_names = {
+            task.triggers.start_trigger.trig_type.name for task in tasks
+        }
+
+        if len(trig_type_names) > 1:
+            logger.error(
+                "All tasks must have the same trigger type. Found: %s",
+                trig_type_names,
+            )
+            return False
+
+        trig_type_name = trig_type_names.pop()
+
+        if trig_type_name == "NONE":
+            # No hardware trigger — software mode
+            self.trigger_type = "software"
+            logger.info("No hardware trigger; using software trigger.")
+            return True
+
+        # Validate that all tasks share the same trigger source
+        if trig_type_name == "DIGITAL_EDGE":
+            sources = {
+                task.triggers.start_trigger.dig_edge_src for task in tasks
+            }
+        elif trig_type_name == "ANALOG_EDGE":
+            sources = {
+                task.triggers.start_trigger.anlg_edge_src for task in tasks
+            }
+        else:
+            logger.error("Unsupported trigger type: %s", trig_type_name)
+            return False
+
+        if len(sources) > 1:
+            logger.error(
+                "All tasks must share the same trigger source. Found: %s",
+                sources,
+            )
+            return False
+
+        self.trigger_type = "hardware"
+        logger.info(
+            "Hardware trigger validated: type=%s, source=%s",
+            trig_type_name,
+            sources.pop(),
+        )
+        return True
+
+    def _validate_acquisition_mode(self, tasks: list) -> bool:
+        """Verify that acquisition mode is compatible with the trigger type.
+
+        FINITE mode requires a hardware trigger; CONTINUOUS mode requires
+        a software trigger.  Mixed modes are rejected.
+
+        Parameters
+        ----------
+        tasks : list
+            Resolved ``nidaqmx.task.Task`` objects.
+
+        Returns
+        -------
+        bool
+            ``True`` when mode and trigger type are compatible, or when
+            *tasks* is empty.  ``False`` on mismatch.
+
+        Notes
+        -----
+        Accesses ``self.trigger_type``, which must be set before this
+        method is called (guaranteed because :meth:`_validate_triggers`
+        runs first in the pipeline).
+        """
+        if not tasks:
+            return True
+
+        modes = {task.timing.samp_quant_samp_mode.name for task in tasks}
+
+        if len(modes) > 1:
+            logger.error(
+                "All tasks must share the same acquisition mode. Found: %s", modes
+            )
+            return False
+
+        mode = modes.pop().lower()
+
+        if mode == "finite":
+            if self.trigger_type == "hardware":
+                logger.info("FINITE mode with hardware trigger: valid.")
+                return True
+            logger.error(
+                "FINITE mode requires a hardware trigger; current trigger "
+                "type is '%s'.",
+                self.trigger_type,
+            )
+            return False
+
+        if mode == "continuous":
+            if self.trigger_type == "software":
+                logger.info("CONTINUOUS mode with software trigger: valid.")
+                return True
+            logger.error(
+                "CONTINUOUS mode is incompatible with hardware trigger; "
+                "use FINITE mode instead."
+            )
+            return False
+
+        logger.error("Unrecognised acquisition mode: %s", mode)
+        return False
