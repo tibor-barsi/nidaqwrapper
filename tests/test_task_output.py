@@ -110,11 +110,6 @@ class TestNITaskOutputConstructor:
         task = _make_task_output(mock_nidaqmx)
         assert task.device_list == []
 
-    def test_logger_name(self):
-        mock_nidaqmx = _build_mock_nidaqmx()
-        task = _make_task_output(mock_nidaqmx)
-        assert task._logger.name == "nidaqwrapper.task"
-
     def test_reject_duplicate_task_name(self):
         mock_nidaqmx = _build_mock_nidaqmx(task_names=["existing_task"])
         with pytest.raises(ValueError, match="already"):
@@ -473,7 +468,9 @@ class TestContextManager:
 
         mock_daq_task.close.assert_called_once()
 
-    def test_cleanup_exception_logged_not_propagated(self):
+    def test_cleanup_exception_warns_not_propagated(self):
+        import warnings
+
         mock_nidaqmx = _build_mock_nidaqmx()
         task_out = _make_task_output(mock_nidaqmx)
         task_out.add_channel("ao_0", device_ind=0, channel_ind=0)
@@ -488,6 +485,10 @@ class TestContextManager:
         mock_nidaqmx.task.Task.return_value = mock_daq_task
 
         task_out.initiate()
-        # __exit__ should not propagate the cleanup exception
-        task_out.__exit__(None, None, None)
-        # If we get here without exception, the test passes
+        # __exit__ should not propagate the cleanup exception but should warn
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            task_out.__exit__(None, None, None)
+
+        assert len(w) >= 1
+        assert "hardware error" in str(w[0].message)

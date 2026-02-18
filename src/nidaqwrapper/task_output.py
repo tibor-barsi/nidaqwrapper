@@ -29,12 +29,10 @@ Or as a context manager::
 
 from __future__ import annotations
 
-import logging
+import warnings
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-logger = logging.getLogger("nidaqwrapper.task")
 
 try:
     import nidaqmx
@@ -98,8 +96,6 @@ class NITaskOutput:
                 "Choose a different name."
             )
 
-        self._logger = logging.getLogger("nidaqwrapper.task")
-        self._logger.debug("NITaskOutput '%s' created (rate=%s Hz)", task_name, sample_rate)
 
     # ------------------------------------------------------------------
     # Channel configuration
@@ -161,8 +157,6 @@ class NITaskOutput:
             "min_val": min_val,
             "max_val": max_val,
         }
-        self._logger.debug("Channel '%s' added (%s/ao%d)", channel_name, self.device_list[device_ind], channel_ind)
-
     # ------------------------------------------------------------------
     # Task lifecycle
     # ------------------------------------------------------------------
@@ -192,8 +186,6 @@ class NITaskOutput:
                 f"Sample rate {self.sample_rate} Hz is not available for this device. "
                 f"Next available sample rate is {actual_rate} Hz."
             )
-
-        self._logger.debug("NITaskOutput '%s' initiated", self.task_name)
 
     def _create_task(self) -> None:
         """Create the underlying nidaqmx.Task."""
@@ -248,7 +240,6 @@ class NITaskOutput:
             data = signal
 
         self.task.write(data, auto_start=True)
-        self._logger.debug("Signal written (shape=%s)", signal.shape)
 
     # ------------------------------------------------------------------
     # Cleanup
@@ -262,12 +253,9 @@ class NITaskOutput:
         if self.task is not None:
             try:
                 self.task.close()
-            except Exception:
-                self._logger.warning(
-                    "Exception while closing task '%s'", self.task_name, exc_info=True
-                )
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self.task = None
-            self._logger.debug("Task '%s' cleared", self.task_name)
 
     # ------------------------------------------------------------------
     # Context manager
@@ -281,9 +269,5 @@ class NITaskOutput:
         """Exit the context manager, ensuring task cleanup."""
         try:
             self.clear_task()
-        except Exception:
-            self._logger.warning(
-                "Exception during context manager cleanup for '%s'",
-                self.task_name,
-                exc_info=True,
-            )
+        except Exception as exc:
+            warnings.warn(str(exc), stacklevel=2)
