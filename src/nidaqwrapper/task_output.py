@@ -240,6 +240,10 @@ class NITaskOutput:
         """
         if signal.ndim == 2:
             data = np.ascontiguousarray(signal.T)
+            # nidaqmx requires a 1-D array for single-channel tasks;
+            # a (1, N) 2-D array triggers a channel-count validation error.
+            if data.shape[0] == 1:
+                data = data[0]
         else:
             data = signal
 

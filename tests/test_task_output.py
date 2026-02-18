@@ -341,7 +341,9 @@ class TestGenerate:
         task_out.generate(signal)
 
         written_data = mock_daq_task.write.call_args[0][0]
-        assert written_data.shape == (1, 1000)
+        # Single-channel 2D input (n_samples, 1) is squeezed to 1D (n_samples,)
+        # because nidaqmx requires a 1-D array for single-channel tasks.
+        assert written_data.shape == (1000,)
 
     def test_auto_start_true(self):
         mock_nidaqmx = _build_mock_nidaqmx()
