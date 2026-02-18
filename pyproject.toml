@@ -26,10 +26,8 @@ dependencies = [
     "numpy>=1.20",
     "nidaqmx>=0.8.0",
     "pyTrigger>=0.3.0",
+    "tomli>=1.0; python_version < '3.11'",
 ]
-
-[project.optional-dependencies]
-settings = ["pandas>=1.0", "openpyxl>=3.0"]
 
 [project.urls]
 Homepage = "https://github.com/tibor-barsi/nidaqwrapper"

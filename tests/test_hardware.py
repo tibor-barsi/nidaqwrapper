@@ -152,7 +152,7 @@ class TestNITaskHardware:
     """Validate NITask voltage acquisition against real NI 9215."""
 
     def test_nitask_voltage_channel_acquisition(self) -> None:
-        """Create a voltage channel, initiate, acquire, verify data shape.
+        """Create a voltage channel, start, acquire, verify data shape.
 
         Uses the priming read pattern: first read(-1) may return 0 samples,
         so we discard it, sleep, and assert on the second read.
@@ -162,7 +162,7 @@ class TestNITaskHardware:
         task = NITask("hw_acq_voltage", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.initiate(start_task=True)
+            task.start(start_task=True)
 
             # Priming read — discard
             time.sleep(0.1)
@@ -189,7 +189,7 @@ class TestNITaskHardware:
         task = NITask("hw_rate_check", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.initiate(start_task=True)
+            task.start(start_task=True)
 
             # Priming read
             time.sleep(0.1)
@@ -216,7 +216,7 @@ class TestNITaskHardware:
         task_name = "hw_ctx_nitask"
         with NITask(task_name, sample_rate=AI_SAMPLE_RATE) as task:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.initiate(start_task=True)
+            task.start(start_task=True)
 
             time.sleep(0.1)
             task.acquire_base()
@@ -230,7 +230,7 @@ class TestNITaskHardware:
         # Can re-create with same name (proves cleanup)
         with NITask(task_name, sample_rate=AI_SAMPLE_RATE) as task2:
             task2.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task2.initiate(start_task=False)
+            task2.start(start_task=False)
 
 
 # ===========================================================================
@@ -242,7 +242,7 @@ class TestNITaskOutputHardware:
     """Validate NITaskOutput analog output against real NI 9260."""
 
     def test_nitaskoutput_ao_generation(self) -> None:
-        """Create AO channel, initiate, generate sine wave, clear task."""
+        """Create AO channel, start, generate sine wave, clear task."""
         if AO_DEVICE_NAME is None:
             pytest.skip("No AO device available")
 
@@ -254,7 +254,7 @@ class TestNITaskOutputHardware:
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
-            task.initiate()
+            task.start()
 
             # Generate a short sine wave (1 second, within NI 9260 range)
             t = np.linspace(0, 1, AO_SAMPLE_RATE, endpoint=False)
@@ -279,7 +279,7 @@ class TestNITaskOutputHardware:
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
-            task.initiate()
+            task.start()
 
             t = np.linspace(0, 1, AO_SAMPLE_RATE, endpoint=False)
             signal = (1.0 * np.sin(2 * np.pi * 10 * t)).reshape(-1, 1)
@@ -489,7 +489,7 @@ class TestWrapperContextManager:
         new_task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            new_task.initiate(start_task=False)
+            new_task.start(start_task=False)
         finally:
             new_task.clear_task()
 
@@ -511,7 +511,7 @@ class TestWrapperContextManager:
         new_task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            new_task.initiate(start_task=False)
+            new_task.start(start_task=False)
         finally:
             new_task.clear_task()
 
@@ -538,7 +538,7 @@ class TestDigitalIO:
         di = DigitalInput("hw_di_read")
         try:
             di.add_channel("di_ch", lines=DI_LINES)
-            di.initiate()
+            di.start()
             data = di.read()
 
             assert isinstance(data, np.ndarray)
@@ -559,7 +559,7 @@ class TestDigitalIO:
         do = DigitalOutput("hw_do_write")
         try:
             do.add_channel("do_ch", lines=DO_LINES)
-            do.initiate()
+            do.start()
 
             do.write(True)
             do.write(False)
@@ -576,7 +576,7 @@ class TestDigitalIO:
         task_name = "hw_di_ctx"
         with DigitalInput(task_name) as di:
             di.add_channel("di_ch", lines=DI_LINES)
-            di.initiate()
+            di.start()
             data = di.read()
             assert data.size >= 1
 
@@ -640,7 +640,7 @@ class TestNIAdvancedHardware:
         task = NITask("hw_adv_st", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.initiate(start_task=False)
+            task.start(start_task=False)
 
             adv = NIAdvanced()
             try:
