@@ -17,12 +17,14 @@ from .advanced import NIAdvanced
 from .digital import DigitalInput, DigitalOutput
 from .task_input import NITask
 from .task_output import NITaskOutput
+from .wrapper import NIDAQWrapper
 
 __all__ = [
     "__version__",
     "DigitalInput",
     "DigitalOutput",
     "NIAdvanced",
+    "NIDAQWrapper",
     "NITask",
     "NITaskOutput",
     "UNITS",
