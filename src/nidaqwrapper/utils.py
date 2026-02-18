@@ -14,10 +14,8 @@ update the mapping here.  See .claude-notes/agent-notes/units-nidaqmx-compat.md.
 
 from __future__ import annotations
 
-import logging
+import warnings
 from typing import Any
-
-logger = logging.getLogger("nidaqwrapper.utils")
 
 try:
     import nidaqmx
@@ -27,8 +25,10 @@ try:
     _NIDAQMX_AVAILABLE = True
 except ImportError:
     _NIDAQMX_AVAILABLE = False
-    logger.warning(
-        "nidaqmx not available. Hardware functions will raise RuntimeError."
+    warnings.warn(
+        "nidaqmx not available. Hardware functions will raise RuntimeError.",
+        ImportWarning,
+        stacklevel=2,
     )
 
 
@@ -120,8 +120,8 @@ def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
     -------
     nidaqmx.Task or None
         The loaded task object, or ``None`` if the task is already loaded
-        by another process (error code -200089). In this case a WARNING is
-        logged and the caller is responsible for deciding how to proceed.
+        by another process (error code -200089). The caller is responsible
+        for deciding how to proceed.
 
     Raises
     ------
@@ -131,7 +131,7 @@ def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
     ConnectionError
         If the device associated with the task is inaccessible (error code
         -201003) — the device may be disconnected or held by another
-        application.  An ERROR is logged before raising.
+        application.
     DaqError
         Any other NI-DAQmx error is re-raised unchanged so the caller can
         handle hardware-specific conditions.
@@ -164,18 +164,8 @@ def get_task_by_name(name: str) -> nidaqmx.task.Task | None:
             return task.load()
         except DaqError as exc:
             if exc.error_code == -200089:
-                logger.warning(
-                    "Task '%s' is already loaded elsewhere. Returning None.",
-                    name,
-                )
                 return None
             if exc.error_code == -201003:
-                logger.error(
-                    "Task '%s' cannot be accessed. The device may be "
-                    "disconnected or in use by another application. "
-                    "Check the hardware connection.",
-                    name,
-                )
                 raise ConnectionError(
                     f"Task '{name}' cannot be accessed. The device may be "
                     "disconnected or in use by another application. "

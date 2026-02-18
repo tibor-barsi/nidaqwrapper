@@ -267,29 +267,6 @@ class TestGetTaskByName:
             result = get_task_by_name("MyTask")
             assert result is None
 
-    def test_get_task_by_name_error_200089_logs_warning(
-        self, mock_system, caplog
-    ):
-        """get_task_by_name() logs a WARNING when error code -200089 is raised."""
-        import logging
-
-        from nidaqmx.errors import DaqError
-
-        system = mock_system(task_names=["MyTask"])
-        mock_task_obj = list(system.tasks)[0]
-        mock_task_obj.load.side_effect = DaqError("Task already loaded", -200089)
-
-        with patch("nidaqmx.system.System.local", return_value=system):
-            from nidaqwrapper.utils import get_task_by_name
-
-            with caplog.at_level(logging.WARNING, logger="nidaqwrapper.utils"):
-                get_task_by_name("MyTask")
-
-            assert any(
-                record.levelno == logging.WARNING and "MyTask" in record.message
-                for record in caplog.records
-            )
-
     def test_get_task_by_name_error_201003_raises_connection_error(
         self, mock_system
     ):
@@ -312,30 +289,6 @@ class TestGetTaskByName:
 
             error_message = str(exc_info.value)
             assert "disconnected" in error_message or "in use" in error_message
-
-    def test_get_task_by_name_error_201003_logs_error(
-        self, mock_system, caplog
-    ):
-        """get_task_by_name() logs an ERROR when error code -201003 is raised."""
-        import logging
-
-        from nidaqmx.errors import DaqError
-
-        system = mock_system(task_names=["MyTask"])
-        mock_task_obj = list(system.tasks)[0]
-        mock_task_obj.load.side_effect = DaqError("Device disconnected", -201003)
-
-        with patch("nidaqmx.system.System.local", return_value=system):
-            from nidaqwrapper.utils import get_task_by_name
-
-            with caplog.at_level(logging.ERROR, logger="nidaqwrapper.utils"):
-                with pytest.raises(ConnectionError):
-                    get_task_by_name("MyTask")
-
-            assert any(
-                record.levelno == logging.ERROR and "MyTask" in record.message
-                for record in caplog.records
-            )
 
     def test_get_task_by_name_other_error_propagates(self, mock_system):
         """get_task_by_name() re-raises DaqError for unrecognised error codes."""
