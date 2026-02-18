@@ -13,6 +13,7 @@ from .utils import (
     list_devices,
     list_tasks,
 )
+from .advanced import NIAdvanced
 from .digital import DigitalInput, DigitalOutput
 from .task_input import NITask
 from .task_output import NITaskOutput
@@ -21,6 +22,7 @@ __all__ = [
     "__version__",
     "DigitalInput",
     "DigitalOutput",
+    "NIAdvanced",
     "NITask",
     "NITaskOutput",
     "UNITS",
