@@ -310,6 +310,7 @@ class NITask:
         actual_rate = float(self.task._timing.samp_clk_rate)
         requested_rate = float(self.sample_rate)
         if actual_rate != requested_rate:
+            self.clear_task()
             raise ValueError(
                 f"Sample rate {requested_rate} Hz is not supported by this device. "
                 f"The driver coerced it to {actual_rate} Hz. "
