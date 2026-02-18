@@ -1643,6 +1643,23 @@ class TestClearTask:
         # The call below must complete without raising.
         task.clear_task()
 
+    def test_clear_task_exception_warns_not_propagated(self, mock_system):
+        """clear_task() emits warning when task.close() raises."""
+        import warnings
+
+        task = _make_task(mock_system)
+        mock_hw_task = MagicMock()
+        mock_hw_task.close.side_effect = RuntimeError("close failed")
+        task.task = mock_hw_task
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            task.clear_task()
+
+        assert len(w) >= 1
+        assert "close failed" in str(w[0].message)
+        assert task.task is None
+
 
 # ---------------------------------------------------------------------------
 # 10. save()

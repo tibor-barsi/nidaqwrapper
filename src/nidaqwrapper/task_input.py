@@ -354,7 +354,10 @@ class NITask:
         to ``None``.  Safe to call on an un-initiated task or multiple times.
         """
         if hasattr(self, "task") and self.task is not None:
-            self.task.close()
+            try:
+                self.task.close()
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self.task = None
 
     def save(self, clear_task: bool = True) -> None:
