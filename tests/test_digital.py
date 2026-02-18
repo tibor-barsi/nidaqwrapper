@@ -1,913 +1,1944 @@
-"""Tests for nidaqwrapper.digital module (DigitalInput / DigitalOutput).
+"""Tests for nidaqwrapper.digital module (DigitalInput and DigitalOutput).
 
-Tests are organized by task group from the OpenSpec change, with separate
-test classes for DigitalInput and DigitalOutput.
+Architecture: Direct Delegation
+--------------------------------
+Constructor creates nidaqmx.Task immediately (not deferred to initiate()).
+add_channel() delegates directly to nidaqmx task.di_channels / do_channels.
+start() replaces initiate() — configures timing and optionally starts task.
+self.channels dict is REMOVED — nidaqmx task is single source of truth.
+initiate() is REMOVED.
+save_config() / from_config() added for TOML persistence.
+
+These tests are written TDD-style: they describe the target architecture and
+WILL FAIL against the current store-then-pipe implementation. They pass once
+the direct-delegation refactor is complete.
+
+All tests use mocked nidaqmx — no hardware required.
 """
 
 from __future__ import annotations
 
+import warnings
+from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
+
 
 # ---------------------------------------------------------------------------
-# Helper: create a mock nidaqmx module for patching into digital.py
+# Helpers — mock nidaqmx.Task that tracks DI/DO channel additions
 # ---------------------------------------------------------------------------
 
-def _make_mock_nidaqmx(
-    device_names: list[str] | None = None,
-    task_names: list[str] | None = None,
-):
-    """Build a mock nidaqmx module suitable for ``digital.py`` imports.
 
-    Returns (mock_nidaqmx, mock_task_instance) so tests can inspect the
-    nidaqmx.Task() that ``initiate()`` would create.
+def _make_mock_ni_task() -> MagicMock:
+    """Create a mock nidaqmx.Task that tracks DI/DO channel additions.
+
+    The mock records all add_di_chan() / add_do_chan() calls and maintains a
+    shared channel list so that duplicate detection (via task.channel_names
+    iteration) works correctly in the implementation under test.
+
+    Digital channels use ``name_to_assign_to_lines`` (not
+    ``name_to_assign_to_channel``), so the handler captures that keyword.
     """
-    if device_names is None:
-        device_names = ["Dev1", "Dev2"]
+    task = MagicMock()
+    _channel_names: list[str] = []
+    _channel_objects: list[MagicMock] = []
+
+    def _make_handler(channel_type: str):
+        def handler(**kwargs):
+            # Digital channels use 'name_to_assign_to_lines', not 'name_to_assign_to_channel'
+            name = kwargs.get("name_to_assign_to_lines", "")
+            lines = kwargs.get("lines", "")
+            _channel_names.append(name)
+            ch = MagicMock()
+            ch.name = name
+            ch.physical_channel = MagicMock()
+            # For digital, the 'lines' arg IS the physical channel spec
+            ch.physical_channel.name = lines
+            _channel_objects.append(ch)
+
+        return handler
+
+    task.di_channels.add_di_chan.side_effect = _make_handler("di")
+    task.do_channels.add_do_chan.side_effect = _make_handler("do")
+
+    # channel_names: same list object, stays in sync as channels are added
+    task.channel_names = _channel_names
+
+    # DI/DO channel iteration (used for duplicate line detection)
+    task.di_channels.__iter__ = MagicMock(side_effect=lambda: iter(_channel_objects))
+    task.do_channels.__iter__ = MagicMock(side_effect=lambda: iter(_channel_objects))
+
+    return task
+
+
+def _build_di(
+    mock_system,
+    mock_constants,
+    task_name: str = "test_di",
+    sample_rate: float | None = None,
+    task_names: list[str] | None = None,
+) -> tuple[ExitStack, object, MagicMock]:
+    """Construct a DigitalInput inside a fully-patched context.
+
+    Returns (exit_stack, digital_input_instance, mock_nidaqmx_task).
+    Use inside a ``with`` block — patches stay active so that add_channel()
+    and start() can also run under mocking.
+
+    The ``_expand_port_to_line_range`` function is patched to be a pass-through
+    (returns the input unchanged) so that most tests are not sensitive to
+    hardware queries. Specific port-expansion tests patch it separately.
+
+    Example::
+
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn", lines="Dev1/port0/line0")
+            di.start()
+    """
     if task_names is None:
         task_names = []
 
-    mock_nidaqmx = MagicMock()
+    system = mock_system(task_names=task_names)
+    mock_ni_task = _make_mock_ni_task()
 
-    # System
-    devices = []
-    for name in device_names:
-        dev = MagicMock()
-        dev.name = name
-        devices.append(dev)
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital.nidaqmx.system.System.local",
+            return_value=system,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital.nidaqmx.task.Task",
+            return_value=mock_ni_task,
+        )
+    )
+    stack.enter_context(patch("nidaqwrapper.digital.constants", mock_constants))
+    # Pass-through for port expansion so most tests don't need system queries
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital._expand_port_to_line_range",
+            side_effect=lambda lines: lines,
+        )
+    )
 
-    system = MagicMock()
-    system.devices = devices
+    from nidaqwrapper.digital import DigitalInput
 
-    # Tasks in NI MAX
-    tasks_collection = MagicMock()
-    tasks_collection.task_names = task_names
-    system.tasks = tasks_collection
-
-    mock_nidaqmx.system.System.local.return_value = system
-
-    # Task constructor returns a mock task instance
-    mock_task_instance = MagicMock()
-    mock_task_instance.di_channels = MagicMock()
-    mock_task_instance.do_channels = MagicMock()
-    mock_task_instance.timing = MagicMock()
-    mock_task_instance.number_of_channels = 1
-    mock_nidaqmx.Task.return_value = mock_task_instance
-
-    # Constants
-    mock_nidaqmx.constants.AcquisitionType.CONTINUOUS = "CONTINUOUS"
-    mock_nidaqmx.constants.LineGrouping.CHAN_PER_LINE = "CHAN_PER_LINE"
-    mock_nidaqmx.constants.READ_ALL_AVAILABLE = -1
-
-    return mock_nidaqmx, mock_task_instance
+    di = DigitalInput(task_name, sample_rate=sample_rate)
+    return stack, di, mock_ni_task
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+def _build_do(
+    mock_system,
+    mock_constants,
+    task_name: str = "test_do",
+    sample_rate: float | None = None,
+    task_names: list[str] | None = None,
+) -> tuple[ExitStack, object, MagicMock]:
+    """Construct a DigitalOutput inside a fully-patched context.
+
+    Returns (exit_stack, digital_output_instance, mock_nidaqmx_task).
+    Use inside a ``with`` block. Mirrors _build_di() for DigitalOutput.
+
+    Example::
+
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("led", lines="Dev1/port1/line0")
+            do.start()
+    """
+    if task_names is None:
+        task_names = []
+
+    system = mock_system(task_names=task_names)
+    mock_ni_task = _make_mock_ni_task()
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital.nidaqmx.system.System.local",
+            return_value=system,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital.nidaqmx.task.Task",
+            return_value=mock_ni_task,
+        )
+    )
+    stack.enter_context(patch("nidaqwrapper.digital.constants", mock_constants))
+    # Pass-through for port expansion
+    stack.enter_context(
+        patch(
+            "nidaqwrapper.digital._expand_port_to_line_range",
+            side_effect=lambda lines: lines,
+        )
+    )
+
+    from nidaqwrapper.digital import DigitalOutput
+
+    do = DigitalOutput(task_name, sample_rate=sample_rate)
+    return stack, do, mock_ni_task
+
+
+# ===========================================================================
 # DigitalInput Tests
-# ═══════════════════════════════════════════════════════════════════════════
+# ===========================================================================
 
 
 class TestDigitalInputConstructor:
-    """Task group 1: DigitalInput constructor tests."""
+    """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
-    def test_on_demand_mode_defaults(self):
-        """DigitalInput without sample_rate has mode='on_demand', sample_rate=None."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+    def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
+        """Constructor calls nidaqmx.task.Task(new_task_name=task_name)."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ) as mock_cls,
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
             from nidaqwrapper.digital import DigitalInput
 
-            di = DigitalInput(task_name="di_read")
-            assert di.task_name == "di_read"
-            assert di.sample_rate is None
-            assert di.mode == "on_demand"
-            assert di.channels == {}
+            DigitalInput("switches", sample_rate=None)
 
-    def test_clocked_mode(self):
-        """DigitalInput with sample_rate=1000 has mode='clocked'."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+        mock_cls.assert_called_once_with(new_task_name="switches")
+
+    def test_task_attribute_set_immediately(self, mock_system, mock_constants):
+        """self.task is set to the nidaqmx.Task in the constructor."""
+        ctx, di, mock_ni_task = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert di.task is mock_ni_task
+
+    def test_on_demand_mode(self, mock_system, mock_constants):
+        """No sample_rate sets mode='on_demand'."""
+        ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=None)
+        with ctx:
+            pass
+        assert di.mode == "on_demand"
+        assert di.sample_rate is None
+
+    def test_clocked_mode(self, mock_system, mock_constants):
+        """sample_rate=1000 sets mode='clocked'."""
+        ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            pass
+        assert di.mode == "clocked"
+        assert di.sample_rate == 1000
+
+    def test_device_discovery(self, mock_system, mock_constants):
+        """device_list is populated from system devices in the constructor."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        # conftest default devices: cDAQ1Mod1, cDAQ1Mod2
+        assert "cDAQ1Mod1" in di.device_list
+        assert "cDAQ1Mod2" in di.device_list
+
+    def test_duplicate_task_name_raises(self, mock_system, mock_constants):
+        """Constructor raises ValueError when task_name exists in NI MAX."""
+        system = mock_system(task_names=["existing_di"])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
             from nidaqwrapper.digital import DigitalInput
 
-            di = DigitalInput(task_name="di_clocked", sample_rate=1000)
-            assert di.sample_rate == 1000
-            assert di.mode == "clocked"
+            with pytest.raises(ValueError, match="existing_di"):
+                DigitalInput("existing_di")
 
-    def test_device_discovery(self):
-        """DigitalInput discovers connected NI-DAQmx devices."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx(device_names=["cDAQ1Mod1", "cDAQ1Mod2"])
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_dev")
-            assert "cDAQ1Mod1" in di.device_list
-            assert "cDAQ1Mod2" in di.device_list
-
-    def test_reject_duplicate_task_name(self):
-        """DigitalInput raises ValueError if task_name already exists in NI MAX."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx(task_names=["existing_task"])
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            with pytest.raises(ValueError, match="existing_task"):
-                DigitalInput(task_name="existing_task")
+    def test_no_channels_dict(self, mock_system, mock_constants):
+        """The old self.channels dict no longer exists in the new architecture."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(di, "channels")
 
 
 class TestDigitalInputAddChannel:
-    """Task group 2: DigitalInput.add_channel() tests."""
+    """add_channel() delegates directly to nidaqmx di_channels.add_di_chan()."""
 
-    def _make_di(self):
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        patcher = patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system})
-        patcher.start()
-        from nidaqwrapper.digital import DigitalInput
-
-        di = DigitalInput(task_name="di_ch")
-        return di, patcher
-
-    def test_add_single_line(self):
-        """add_channel stores single line specification."""
-        di, patcher = self._make_di()
-        try:
+    def test_delegates_to_di_channels(self, mock_system, mock_constants):
+        """add_channel() calls add_di_chan() on the nidaqmx task."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
             di.add_channel("btn_1", lines="Dev1/port0/line0")
-            assert "btn_1" in di.channels
-            assert di.channels["btn_1"]["lines"] == "Dev1/port0/line0"
-        finally:
-            patcher.stop()
 
-    def test_add_line_range(self):
-        """add_channel stores line range specification."""
-        di, patcher = self._make_di()
-        try:
-            di.add_channel("switches", lines="Dev1/port0/line0:3")
-            assert di.channels["switches"]["lines"] == "Dev1/port0/line0:3"
-        finally:
-            patcher.stop()
+        mt.di_channels.add_di_chan.assert_called_once()
 
-    def test_add_full_port(self):
-        """add_channel stores full port specification."""
-        di, patcher = self._make_di()
-        try:
+    def test_passes_lines_directly(self, mock_system, mock_constants):
+        """The lines string is forwarded as the 'lines' kwarg."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_1", lines="Dev1/port0/line0:3")
+
+        kwargs = mt.di_channels.add_di_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port0/line0:3"
+
+    def test_passes_channel_name(self, mock_system, mock_constants):
+        """Channel name is forwarded as name_to_assign_to_lines."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("my_button", lines="Dev1/port0/line0")
+
+        kwargs = mt.di_channels.add_di_chan.call_args.kwargs
+        assert kwargs["name_to_assign_to_lines"] == "my_button"
+
+    def test_uses_chan_per_line(self, mock_system, mock_constants):
+        """add_channel() passes line_grouping=CHAN_PER_LINE to nidaqmx."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_1", lines="Dev1/port0/line0")
+
+        kwargs = mt.di_channels.add_di_chan.call_args.kwargs
+        assert kwargs["line_grouping"] == mock_constants.LineGrouping.CHAN_PER_LINE
+
+    def test_port_expansion_called_for_port_spec(self, mock_system, mock_constants):
+        """Port-only spec triggers _expand_port_to_line_range() during add_channel()."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                return_value="Dev1/port0/line0:7",
+            ) as mock_expand,
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            di = DigitalInput("test_expand")
             di.add_channel("port0", lines="Dev1/port0")
-            assert di.channels["port0"]["lines"] == "Dev1/port0"
-        finally:
-            patcher.stop()
 
-    def test_reject_duplicate_channel_name(self):
-        """add_channel raises ValueError on duplicate channel name."""
-        di, patcher = self._make_di()
-        try:
+        mock_expand.assert_called_once_with("Dev1/port0")
+        # The expanded result is forwarded to nidaqmx
+        kwargs = mock_ni_task.di_channels.add_di_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port0/line0:7"
+
+    def test_line_spec_passed_through_expansion(self, mock_system, mock_constants):
+        """Line specs containing '/line' are passed through expansion unchanged."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ) as mock_expand,
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            di = DigitalInput("test_noexpand")
+            di.add_channel("btn", lines="Dev1/port0/line0:3")
+
+        # Expansion function was called — it's called for all specs, but returns
+        # the spec unchanged when '/line' is present (handled internally)
+        mock_expand.assert_called_once_with("Dev1/port0/line0:3")
+
+    def test_duplicate_name_raises(self, mock_system, mock_constants):
+        """Adding two channels with the same name raises ValueError."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
             di.add_channel("btn_1", lines="Dev1/port0/line0")
             with pytest.raises(ValueError, match="btn_1"):
                 di.add_channel("btn_1", lines="Dev1/port0/line1")
-        finally:
-            patcher.stop()
 
-    def test_reject_duplicate_lines(self):
-        """add_channel raises ValueError when lines are already in use."""
-        di, patcher = self._make_di()
-        try:
+    def test_duplicate_lines_raises(self, mock_system, mock_constants):
+        """Adding two channels with the same lines string raises ValueError."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
             di.add_channel("ch1", lines="Dev1/port0/line0")
             with pytest.raises(ValueError, match="Dev1/port0/line0"):
                 di.add_channel("ch2", lines="Dev1/port0/line0")
-        finally:
-            patcher.stop()
+
+    def test_channel_configs_recorded(self, mock_system, mock_constants):
+        """_channel_configs list is updated after add_channel() for TOML serialization."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+
+        assert hasattr(di, "_channel_configs")
+        assert len(di._channel_configs) == 1
+        assert di._channel_configs[0]["name"] == "btn_group"
+        assert di._channel_configs[0]["lines"] == "Dev1/port0/line0:3"
+
+    def test_multiple_channels_all_recorded(self, mock_system, mock_constants):
+        """All add_channel() calls are recorded in _channel_configs."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+            di.add_channel("sensors", lines="Dev1/port1/line0:7")
+
+        assert len(di._channel_configs) == 2
 
 
-class TestDigitalInputInitiate:
-    """Task group 3: DigitalInput.initiate() tests."""
+class TestDigitalInputStart:
+    """start() replaces initiate() — configures timing and optionally starts task."""
 
-    def test_on_demand_creates_task_and_adds_channels(self):
-        """On-demand initiate creates nidaqmx.Task and adds DI channels."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_init")
-            di.add_channel("btn", lines="Dev1/port0/line0")
-            di.initiate()
-
-            mock_nidaqmx.Task.assert_called_once()
-            mock_task.di_channels.add_di_chan.assert_called_once_with(
-                lines="Dev1/port0/line0",
-                name_to_assign_to_lines="btn",
-                line_grouping="CHAN_PER_LINE",
-            )
-
-    def test_on_demand_no_timing(self):
-        """On-demand initiate does NOT configure timing."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_notimed")
+    def test_clocked_configures_timing(self, mock_system, mock_constants):
+        """start() calls cfg_samp_clk_timing in clocked mode."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+            di.start()
 
-            mock_task.timing.cfg_samp_clk_timing.assert_not_called()
+        mt.timing.cfg_samp_clk_timing.assert_called_once()
+        kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
+        assert kwargs["rate"] == 1000
 
-    def test_on_demand_does_not_start_task(self):
-        """On-demand initiate does NOT call task.start() regardless of flag."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_nostart")
+    def test_clocked_uses_continuous_mode(self, mock_system, mock_constants):
+        """start() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate(start_task=True)
+            di.start()
 
-            mock_task.start.assert_not_called()
+        kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
+        assert kwargs["sample_mode"] == mock_constants.AcquisitionType.CONTINUOUS
 
-    def test_clocked_configures_timing(self):
-        """Clocked initiate configures timing with sample_rate and CONTINUOUS."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_clk", sample_rate=1000)
+    def test_on_demand_no_timing(self, mock_system, mock_constants):
+        """start() in on-demand mode does NOT configure timing."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=None)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+            di.start()
 
-            mock_task.timing.cfg_samp_clk_timing.assert_called_once_with(
-                rate=1000,
-                sample_mode="CONTINUOUS",
-            )
+        mt.timing.cfg_samp_clk_timing.assert_not_called()
 
-    def test_clocked_start_task_true(self):
-        """Clocked initiate with start_task=True calls task.start()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_start", sample_rate=1000)
+    def test_on_demand_does_not_start(self, mock_system, mock_constants):
+        """start() in on-demand mode does NOT call task.start()."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=None)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate(start_task=True)
+            di.start(start_task=True)
 
-            mock_task.start.assert_called_once()
+        mt.start.assert_not_called()
 
-    def test_clocked_start_task_false(self):
-        """Clocked initiate with start_task=False does NOT call task.start()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_nostart2", sample_rate=1000)
+    def test_clocked_start_task_true(self, mock_system, mock_constants):
+        """start(start_task=True) calls task.start() in clocked mode."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate(start_task=False)
+            di.start(start_task=True)
 
-            mock_task.start.assert_not_called()
+        mt.start.assert_called_once()
+
+    def test_clocked_start_task_false(self, mock_system, mock_constants):
+        """start(start_task=False) configures timing but does NOT start the task."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+            di.start(start_task=False)
+
+        mt.timing.cfg_samp_clk_timing.assert_called_once()
+        mt.start.assert_not_called()
+
+    def test_start_no_channels_raises(self, mock_system, mock_constants):
+        """start() raises ValueError when no channels have been added."""
+        ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            with pytest.raises(ValueError, match="[Nn]o channels|channel"):
+                di.start()
+
+
+class TestDigitalInputGetters:
+    """Getters delegate to the nidaqmx task properties."""
+
+    def test_channel_list(self, mock_system, mock_constants):
+        """channel_list returns names tracked by the nidaqmx task."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_1", lines="Dev1/port0/line0")
+            di.add_channel("btn_2", lines="Dev1/port0/line1")
+
+        assert di.channel_list == ["btn_1", "btn_2"]
+
+    def test_number_of_ch(self, mock_system, mock_constants):
+        """number_of_ch returns count from the nidaqmx task."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            assert di.number_of_ch == 0
+            di.add_channel("btn_1", lines="Dev1/port0/line0")
+            assert di.number_of_ch == 1
+            di.add_channel("btn_2", lines="Dev1/port0/line1")
+            assert di.number_of_ch == 2
+
+    def test_channel_list_empty_initially(self, mock_system, mock_constants):
+        """channel_list is empty on a new task before any channels are added."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            assert di.channel_list == []
 
 
 class TestDigitalInputRead:
-    """Task group 4: DigitalInput.read() (on-demand) tests."""
+    """read() performs on-demand single-sample reads."""
 
-    def test_read_single_line_bool(self):
-        """read() with single-line returns numpy array with one bool."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = True
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_rd1")
+    def test_read_single_line_bool(self, mock_system, mock_constants):
+        """read() wraps a single bool into a numpy array of length 1."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        mt.read.return_value = True
+        with ctx:
             di.add_channel("btn", lines="Dev1/port0/line0")
-            di.initiate()
             data = di.read()
 
-            assert isinstance(data, np.ndarray)
-            assert len(data) == 1
-            assert data[0] == True
+        assert isinstance(data, np.ndarray)
+        assert len(data) == 1
+        assert data[0] == True  # noqa: E712
 
-    def test_read_multi_line_list(self):
-        """read() with multi-line returns numpy array with one value per line."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = [True, False, True, False]
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_rdm")
+    def test_read_multi_line_list(self, mock_system, mock_constants):
+        """read() returns a numpy array with one value per line."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        mt.read.return_value = [True, False, True, False]
+        with ctx:
             di.add_channel("sw", lines="Dev1/port0/line0:3")
-            di.initiate()
             data = di.read()
 
-            assert isinstance(data, np.ndarray)
-            assert len(data) == 4
-            np.testing.assert_array_equal(data, [True, False, True, False])
+        assert isinstance(data, np.ndarray)
+        assert len(data) == 4
+        np.testing.assert_array_equal(data, [True, False, True, False])
 
-    def test_read_returns_numpy_array(self):
-        """read() always returns a numpy array."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = False
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_np")
+    def test_read_returns_numpy(self, mock_system, mock_constants):
+        """read() always returns a numpy.ndarray."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        mt.read.return_value = False
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
             data = di.read()
 
-            assert isinstance(data, np.ndarray)
-
-    def test_read_on_demand_without_explicit_start(self):
-        """read() works in on-demand mode without explicit task start."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = True
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_impl")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
-
-            mock_task.start.assert_not_called()
-            data = di.read()
-            assert data[0] == True
+        assert isinstance(data, np.ndarray)
 
 
 class TestDigitalInputReadAllAvailable:
-    """Task group 5: DigitalInput.read_all_available() (clocked) tests."""
+    """read_all_available() reads buffered data in clocked mode."""
 
-    def test_returns_n_samples_n_lines_shape(self):
-        """read_all_available() returns (n_samples, n_lines) array."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        # nidaqmx returns (n_lines, n_samples) — 4 lines, 500 samples
-        mock_task.read.return_value = [
+    def test_returns_n_samples_n_lines(self, mock_system, mock_constants):
+        """read_all_available() returns (n_samples, n_lines) shaped array."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        # nidaqmx returns (n_lines, n_samples) for multi-line — 4 lines, 500 samples
+        mt.read.return_value = [
             [True] * 500,
             [False] * 500,
             [True] * 500,
             [False] * 500,
         ]
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_cont", sample_rate=1000)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0:3")
-            di.initiate()
+            di.start(start_task=False)
             data = di.read_all_available()
 
-            assert data.shape == (500, 4)
+        assert data.shape == (500, 4)
 
-    def test_empty_buffer_returns_empty(self):
-        """read_all_available() returns empty array when buffer is empty."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = []
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_empty", sample_rate=1000)
+    def test_empty_buffer(self, mock_system, mock_constants):
+        """read_all_available() returns an empty array when the buffer is empty."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        mt.read.return_value = []
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
             data = di.read_all_available()
 
-            assert data.size == 0
+        assert data.size == 0
 
-    def test_uses_read_all_available_constant(self):
+    def test_uses_read_all_available_constant(self, mock_system, mock_constants):
         """read_all_available() passes READ_ALL_AVAILABLE to task.read()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        mock_task.read.return_value = [True, False]
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_raa", sample_rate=1000)
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        mt.read.return_value = [True, False]
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
             di.read_all_available()
 
-            mock_task.read.assert_called_with(number_of_samples_per_channel=-1)
+        mt.read.assert_called_with(
+            number_of_samples_per_channel=mock_constants.READ_ALL_AVAILABLE
+        )
 
-    def test_raises_in_on_demand_mode(self):
-        """read_all_available() raises RuntimeError in on-demand mode."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_od")
+    def test_raises_in_on_demand_mode(self, mock_system, mock_constants):
+        """read_all_available() raises RuntimeError when mode is on_demand."""
+        ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=None)
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
-
             with pytest.raises(RuntimeError, match="clocked mode"):
                 di.read_all_available()
 
-    def test_single_line_reshaped(self):
-        """read_all_available() reshapes single-line data to (n_samples, 1)."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        # Single line: nidaqmx returns flat list
-        mock_task.read.return_value = [True, False, True]
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_1line", sample_rate=1000)
+    def test_single_line_reshaped(self, mock_system, mock_constants):
+        """Single-line clocked read is reshaped to (n_samples, 1)."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        # Single line: nidaqmx returns a flat list
+        mt.read.return_value = [True, False, True]
+        with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+            di.start(start_task=False)
             data = di.read_all_available()
 
-            assert data.shape == (3, 1)
+        assert data.shape == (3, 1)
 
 
 class TestDigitalInputClearTask:
-    """Task group 6: DigitalInput.clear_task() and context manager tests."""
+    """clear_task() releases hardware resources safely."""
 
-    def test_clear_task_closes_initiated_task(self):
-        """clear_task() calls task.close() on an initiated task."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
+    def test_closes_task(self, mock_system, mock_constants):
+        """clear_task() calls task.close() on the nidaqmx task."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
 
-            di = DigitalInput(task_name="di_clear")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+        di.clear_task()
+        mt.close.assert_called_once()
+
+    def test_sets_task_none(self, mock_system, mock_constants):
+        """clear_task() sets self.task to None."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        di.clear_task()
+        assert di.task is None
+
+    def test_multiple_calls_safe(self, mock_system, mock_constants):
+        """Calling clear_task() twice does not raise."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        di.clear_task()
+        di.clear_task()  # Must not raise
+
+    def test_exception_warns(self, mock_system, mock_constants):
+        """clear_task() emits a warning when task.close() raises."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        mt.close.side_effect = OSError("hw error")
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
             di.clear_task()
 
-            mock_task.close.assert_called_once()
-            assert di.task is None
+        assert len(w) >= 1
+        assert "hw error" in str(w[0].message)
+        assert di.task is None
 
-    def test_clear_task_multiple_calls(self):
-        """clear_task() called twice does not raise."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
 
-            di = DigitalInput(task_name="di_multi")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
-            di.clear_task()
-            di.clear_task()  # Should not raise
+class TestDigitalInputContextManager:
+    """DigitalInput implements the context manager protocol."""
 
-    def test_clear_task_never_initiated(self):
-        """clear_task() on a never-initiated task does not raise."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_noinit")
-            di.clear_task()  # Should not raise
-
-    def test_clear_task_exception_warns_not_propagated(self):
-        """clear_task() emits a warning if close() raises, does not propagate."""
-        import warnings
-
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_warn")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
-            mock_task.close.side_effect = OSError("hw error")
-
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                di.clear_task()  # must not raise
-
-            assert len(w) >= 1
-            assert "hw error" in str(w[0].message)
-
-    def test_context_manager_enter_returns_self(self):
+    def test_enter_returns_self(self, mock_system, mock_constants):
         """__enter__ returns the DigitalInput instance."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
 
-            di = DigitalInput(task_name="di_ctx")
-            with di as ctx:
-                assert ctx is di
+        result = di.__enter__()
+        assert result is di
 
-    def test_context_manager_exit_calls_clear_task(self):
+    def test_exit_calls_clear(self, mock_system, mock_constants):
         """__exit__ calls clear_task()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        di.clear_task = MagicMock()
 
-            di = DigitalInput(task_name="di_exit")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+        di.__exit__(None, None, None)
+        di.clear_task.assert_called_once()
 
+    def test_cleanup_on_exception(self, mock_system, mock_constants):
+        """clear_task() is called even when the with-block raises."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        cleared = []
+
+        def _tracking_clear():
+            cleared.append(True)
+            if di.task is not None:
+                di.task.close()
+
+        di.clear_task = _tracking_clear
+
+        with pytest.raises(RuntimeError):
             with di:
-                pass
+                raise RuntimeError("body error")
 
-            mock_task.close.assert_called_once()
+        assert cleared
 
-    def test_context_manager_cleanup_on_exception(self):
-        """__exit__ still calls clear_task() when exception occurs."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+
+class TestDigitalInputInitiateRemoved:
+    """initiate() and old internal methods must not exist in the new architecture."""
+
+    def test_no_initiate_method(self, mock_system, mock_constants):
+        """initiate() method does not exist on DigitalInput."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(di, "initiate")
+
+    def test_no_add_channels_method(self, mock_system, mock_constants):
+        """_add_channels() internal method no longer exists."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(di, "_add_channels")
+
+    def test_no_create_task_method(self, mock_system, mock_constants):
+        """_create_task() internal method no longer exists."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(di, "_create_task")
+
+
+class TestDigitalInputSaveConfig:
+    """save_config() serialises DigitalInput configuration to TOML."""
+
+    def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
+        """save_config() creates a valid TOML file."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+
+        path = tmp_path / "di_config.toml"
+        di.save_config(path)
+        assert path.exists()
+
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        assert "task" in data
+        assert "channels" in data
+
+    def test_task_section_name(self, mock_system, mock_constants, tmp_path):
+        """[task] section contains the task name."""
+        ctx, di, _ = _build_di(
+            mock_system, mock_constants, task_name="my_switches"
+        )
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["name"] == "my_switches"
+
+    def test_task_section_type_digital_input(self, mock_system, mock_constants, tmp_path):
+        """[task] type field is 'digital_input'."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["type"] == "digital_input"
+
+    def test_task_section_clocked_includes_sample_rate(
+        self, mock_system, mock_constants, tmp_path
+    ):
+        """[task] section includes sample_rate for clocked mode."""
+        ctx, di, _ = _build_di(
+            mock_system, mock_constants, sample_rate=1000
+        )
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["sample_rate"] == 1000
+
+    def test_task_section_on_demand_no_sample_rate(
+        self, mock_system, mock_constants, tmp_path
+    ):
+        """[task] section omits sample_rate for on-demand mode."""
+        ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=None)
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert "sample_rate" not in data["task"]
+
+    def test_channel_entries(self, mock_system, mock_constants, tmp_path):
+        """[[channels]] entries contain name and lines."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        channels = data["channels"]
+        assert len(channels) == 1
+        ch = channels[0]
+        assert ch["name"] == "btn_group"
+        assert ch["lines"] == "Dev1/port0/line0:3"
+
+    def test_multiple_channels(self, mock_system, mock_constants, tmp_path):
+        """All channels are serialised to [[channels]] entries."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+            di.add_channel("sensors", lines="Dev1/port1/line0:7")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert len(data["channels"]) == 2
+        names = {ch["name"] for ch in data["channels"]}
+        assert names == {"btn_group", "sensors"}
+
+
+class TestDigitalInputFromConfig:
+    """from_config() creates a DigitalInput from a TOML file."""
+
+    def _write_config(self, tmp_path, content: str):
+        """Write a TOML string to a temporary file and return the path."""
+        path = tmp_path / "config.toml"
+        path.write_text(content)
+        return path
+
+    def test_creates_task_from_toml(self, mock_system, mock_constants, tmp_path):
+        """from_config() creates a DigitalInput with the name from [task]."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "switches"
+type = "digital_input"
+
+[[channels]]
+name = "btn_group"
+lines = "Dev1/port0/line0:3"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ) as mock_cls,
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
             from nidaqwrapper.digital import DigitalInput
 
-            di = DigitalInput(task_name="di_exc")
-            di.add_channel("ch", lines="Dev1/port0/line0")
-            di.initiate()
+            di = DigitalInput.from_config(path)
 
-            with pytest.raises(RuntimeError):
-                with di:
-                    raise RuntimeError("test error")
+        mock_cls.assert_called_once_with(new_task_name="switches")
+        assert di.task_name == "switches"
 
-            mock_task.close.assert_called_once()
+    def test_adds_channels(self, mock_system, mock_constants, tmp_path):
+        """from_config() calls add_channel() for each [[channels]] entry."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "switches"
+type = "digital_input"
+
+[[channels]]
+name = "btn_group"
+lines = "Dev1/port0/line0:3"
+
+[[channels]]
+name = "sensors"
+lines = "Dev1/port1/line0:7"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            DigitalInput.from_config(path)
+
+        assert mock_ni_task.di_channels.add_di_chan.call_count == 2
+
+    def test_clocked_mode_from_config(self, mock_system, mock_constants, tmp_path):
+        """from_config() sets clocked mode when sample_rate is in [task]."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "fast_di"
+type = "digital_input"
+sample_rate = 2000
+
+[[channels]]
+name = "ch"
+lines = "Dev1/port0/line0"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            di = DigitalInput.from_config(path)
+
+        assert di.mode == "clocked"
+        assert di.sample_rate == 2000
+
+    def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when [task] section is missing."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[[channels]]
+name = "ch"
+lines = "Dev1/port0/line0"
+""",
+        )
+        system = mock_system(task_names=[])
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            with pytest.raises(ValueError, match="task"):
+                DigitalInput.from_config(path)
+
+    def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises an error on syntactically invalid TOML."""
+        path = self._write_config(tmp_path, "not = valid [ toml {\n")
+
+        from nidaqwrapper.digital import DigitalInput
+
+        with pytest.raises(Exception):  # tomllib.TOMLDecodeError
+            DigitalInput.from_config(path)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+class TestDigitalInputConfigRoundtrip:
+    """save_config() + from_config() round-trip preserves task configuration."""
+
+    def test_roundtrip_on_demand(self, mock_system, mock_constants, tmp_path):
+        """On-demand config survives a save/load cycle."""
+        ctx, di, _ = _build_di(
+            mock_system, mock_constants, task_name="roundtrip_di", sample_rate=None
+        )
+        with ctx:
+            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+
+        system2 = mock_system(task_names=[])
+        mock_ni_task2 = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system2,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task2,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            di2 = DigitalInput.from_config(path)
+
+        assert di2.task_name == "roundtrip_di"
+        assert di2.sample_rate is None
+        assert di2.mode == "on_demand"
+        kwargs = mock_ni_task2.di_channels.add_di_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port0/line0:3"
+        assert kwargs["name_to_assign_to_lines"] == "btn_group"
+
+    def test_roundtrip_clocked(self, mock_system, mock_constants, tmp_path):
+        """Clocked config survives a save/load cycle."""
+        ctx, di, _ = _build_di(
+            mock_system, mock_constants, task_name="fast_di", sample_rate=5000
+        )
+        with ctx:
+            di.add_channel("signals", lines="Dev1/port0/line0:7")
+
+        path = tmp_path / "config.toml"
+        di.save_config(path)
+
+        system2 = mock_system(task_names=[])
+        mock_ni_task2 = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system2,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task2,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalInput
+
+            di2 = DigitalInput.from_config(path)
+
+        assert di2.task_name == "fast_di"
+        assert di2.sample_rate == 5000
+        assert di2.mode == "clocked"
+
+
+# ===========================================================================
 # DigitalOutput Tests
-# ═══════════════════════════════════════════════════════════════════════════
+# ===========================================================================
 
 
 class TestDigitalOutputConstructor:
-    """Task group 7: DigitalOutput constructor tests."""
+    """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
-    def test_on_demand_mode_defaults(self):
-        """DigitalOutput without sample_rate has mode='on_demand', sample_rate=None."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+    def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
+        """Constructor calls nidaqmx.task.Task(new_task_name=task_name)."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ) as mock_cls,
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
             from nidaqwrapper.digital import DigitalOutput
 
-            do = DigitalOutput(task_name="do_ctrl")
-            assert do.task_name == "do_ctrl"
-            assert do.sample_rate is None
-            assert do.mode == "on_demand"
-            assert do.channels == {}
+            DigitalOutput("leds", sample_rate=None)
 
-    def test_clocked_mode(self):
-        """DigitalOutput with sample_rate=1000 has mode='clocked'."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+        mock_cls.assert_called_once_with(new_task_name="leds")
+
+    def test_task_attribute_set_immediately(self, mock_system, mock_constants):
+        """self.task is set to the nidaqmx.Task in the constructor."""
+        ctx, do, mock_ni_task = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert do.task is mock_ni_task
+
+    def test_on_demand_mode(self, mock_system, mock_constants):
+        """No sample_rate sets mode='on_demand'."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=None)
+        with ctx:
+            pass
+        assert do.mode == "on_demand"
+        assert do.sample_rate is None
+
+    def test_clocked_mode(self, mock_system, mock_constants):
+        """sample_rate=1000 sets mode='clocked'."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            pass
+        assert do.mode == "clocked"
+        assert do.sample_rate == 1000
+
+    def test_device_discovery(self, mock_system, mock_constants):
+        """device_list is populated from system devices in the constructor."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert "cDAQ1Mod1" in do.device_list
+        assert "cDAQ1Mod2" in do.device_list
+
+    def test_duplicate_task_name_raises(self, mock_system, mock_constants):
+        """Constructor raises ValueError when task_name exists in NI MAX."""
+        system = mock_system(task_names=["existing_do"])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
             from nidaqwrapper.digital import DigitalOutput
 
-            do = DigitalOutput(task_name="do_clocked", sample_rate=1000)
-            assert do.sample_rate == 1000
-            assert do.mode == "clocked"
+            with pytest.raises(ValueError, match="existing_do"):
+                DigitalOutput("existing_do")
 
-    def test_device_discovery(self):
-        """DigitalOutput discovers connected devices."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx(device_names=["cDAQ1Mod1", "cDAQ1Mod2"])
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_dev")
-            assert "cDAQ1Mod1" in do.device_list
-            assert "cDAQ1Mod2" in do.device_list
-
-    def test_reject_duplicate_task_name(self):
-        """DigitalOutput raises ValueError if task_name exists in NI MAX."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx(task_names=["existing_task"])
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            with pytest.raises(ValueError, match="existing_task"):
-                DigitalOutput(task_name="existing_task")
+    def test_no_channels_dict(self, mock_system, mock_constants):
+        """The old self.channels dict no longer exists in the new architecture."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(do, "channels")
 
 
 class TestDigitalOutputAddChannel:
-    """Task group 8: DigitalOutput.add_channel() tests."""
+    """add_channel() delegates directly to nidaqmx do_channels.add_do_chan()."""
 
-    def _make_do(self):
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        patcher = patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system})
-        patcher.start()
-        from nidaqwrapper.digital import DigitalOutput
-
-        do = DigitalOutput(task_name="do_ch")
-        return do, patcher
-
-    def test_add_single_line(self):
-        """add_channel stores single line specification."""
-        do, patcher = self._make_do()
-        try:
+    def test_delegates_to_do_channels(self, mock_system, mock_constants):
+        """add_channel() calls add_do_chan() on the nidaqmx task."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("led_1", lines="Dev1/port1/line0")
-            assert "led_1" in do.channels
-            assert do.channels["led_1"]["lines"] == "Dev1/port1/line0"
-        finally:
-            patcher.stop()
 
-    def test_add_line_range(self):
-        """add_channel stores line range specification."""
-        do, patcher = self._make_do()
-        try:
-            do.add_channel("leds", lines="Dev1/port1/line0:7")
-            assert do.channels["leds"]["lines"] == "Dev1/port1/line0:7"
-        finally:
-            patcher.stop()
+        mt.do_channels.add_do_chan.assert_called_once()
 
-    def test_add_full_port(self):
-        """add_channel stores full port specification."""
-        do, patcher = self._make_do()
-        try:
+    def test_passes_lines_directly(self, mock_system, mock_constants):
+        """The lines string is forwarded as the 'lines' kwarg."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+
+        kwargs = mt.do_channels.add_do_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port1/line0:3"
+
+    def test_passes_channel_name(self, mock_system, mock_constants):
+        """Channel name is forwarded as name_to_assign_to_lines."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("my_leds", lines="Dev1/port1/line0")
+
+        kwargs = mt.do_channels.add_do_chan.call_args.kwargs
+        assert kwargs["name_to_assign_to_lines"] == "my_leds"
+
+    def test_uses_chan_per_line(self, mock_system, mock_constants):
+        """add_channel() passes line_grouping=CHAN_PER_LINE to nidaqmx."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("led_1", lines="Dev1/port1/line0")
+
+        kwargs = mt.do_channels.add_do_chan.call_args.kwargs
+        assert kwargs["line_grouping"] == mock_constants.LineGrouping.CHAN_PER_LINE
+
+    def test_port_expansion_called_for_port_spec(self, mock_system, mock_constants):
+        """Port-only spec triggers _expand_port_to_line_range() during add_channel()."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                return_value="Dev1/port1/line0:7",
+            ) as mock_expand,
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput("test_expand")
             do.add_channel("port1", lines="Dev1/port1")
-            assert do.channels["port1"]["lines"] == "Dev1/port1"
-        finally:
-            patcher.stop()
 
-    def test_reject_duplicate_name(self):
-        """add_channel raises ValueError on duplicate channel name."""
-        do, patcher = self._make_do()
-        try:
+        mock_expand.assert_called_once_with("Dev1/port1")
+        kwargs = mock_ni_task.do_channels.add_do_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port1/line0:7"
+
+    def test_duplicate_name_raises(self, mock_system, mock_constants):
+        """Adding two channels with the same name raises ValueError."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("led_1", lines="Dev1/port1/line0")
             with pytest.raises(ValueError, match="led_1"):
                 do.add_channel("led_1", lines="Dev1/port1/line1")
-        finally:
-            patcher.stop()
 
-    def test_reject_duplicate_lines(self):
-        """add_channel raises ValueError when lines are already in use."""
-        do, patcher = self._make_do()
-        try:
+    def test_duplicate_lines_raises(self, mock_system, mock_constants):
+        """Adding two channels with the same lines string raises ValueError."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("ch1", lines="Dev1/port1/line0")
             with pytest.raises(ValueError, match="Dev1/port1/line0"):
                 do.add_channel("ch2", lines="Dev1/port1/line0")
-        finally:
-            patcher.stop()
+
+    def test_channel_configs_recorded(self, mock_system, mock_constants):
+        """_channel_configs list is updated after add_channel() for TOML serialization."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+
+        assert hasattr(do, "_channel_configs")
+        assert len(do._channel_configs) == 1
+        assert do._channel_configs[0]["name"] == "leds"
+        assert do._channel_configs[0]["lines"] == "Dev1/port1/line0:3"
+
+    def test_multiple_channels_all_recorded(self, mock_system, mock_constants):
+        """All add_channel() calls are recorded in _channel_configs."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+            do.add_channel("relays", lines="Dev1/port2/line0:7")
+
+        assert len(do._channel_configs) == 2
 
 
-class TestDigitalOutputInitiate:
-    """Task group 9: DigitalOutput.initiate() tests."""
+class TestDigitalOutputStart:
+    """start() replaces initiate() — configures timing and optionally starts task."""
 
-    def test_on_demand_creates_task_and_adds_do_channels(self):
-        """On-demand initiate creates task and adds DO channels."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_init")
-            do.add_channel("led", lines="Dev1/port1/line0")
-            do.initiate()
-
-            mock_nidaqmx.Task.assert_called_once()
-            mock_task.do_channels.add_do_chan.assert_called_once_with(
-                lines="Dev1/port1/line0",
-                name_to_assign_to_lines="led",
-                line_grouping="CHAN_PER_LINE",
-            )
-
-    def test_on_demand_no_timing(self):
-        """On-demand initiate does NOT configure timing."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_nt")
+    def test_clocked_configures_timing(self, mock_system, mock_constants):
+        """start() calls cfg_samp_clk_timing in clocked mode."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
+            do.start()
 
-            mock_task.timing.cfg_samp_clk_timing.assert_not_called()
+        mt.timing.cfg_samp_clk_timing.assert_called_once()
+        kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
+        assert kwargs["rate"] == 1000
 
-    def test_clocked_configures_timing(self):
-        """Clocked initiate configures timing."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_clk", sample_rate=1000)
+    def test_clocked_uses_continuous_mode(self, mock_system, mock_constants):
+        """start() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
+            do.start()
 
-            mock_task.timing.cfg_samp_clk_timing.assert_called_once_with(
-                rate=1000,
-                sample_mode="CONTINUOUS",
-            )
+        kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
+        assert kwargs["sample_mode"] == mock_constants.AcquisitionType.CONTINUOUS
 
-    def test_clocked_start_task(self):
-        """Clocked initiate with start_task=True starts the task."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_st", sample_rate=1000)
+    def test_on_demand_no_timing(self, mock_system, mock_constants):
+        """start() in on-demand mode does NOT configure timing."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=None)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate(start_task=True)
+            do.start()
 
-            mock_task.start.assert_called_once()
+        mt.timing.cfg_samp_clk_timing.assert_not_called()
+
+    def test_on_demand_does_not_start(self, mock_system, mock_constants):
+        """start() in on-demand mode does NOT call task.start()."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=None)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.start(start_task=True)
+
+        mt.start.assert_not_called()
+
+    def test_clocked_start_task_true(self, mock_system, mock_constants):
+        """start(start_task=True) calls task.start() in clocked mode."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.start(start_task=True)
+
+        mt.start.assert_called_once()
+
+    def test_clocked_start_task_false(self, mock_system, mock_constants):
+        """start(start_task=False) configures timing but does NOT start the task."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.start(start_task=False)
+
+        mt.timing.cfg_samp_clk_timing.assert_called_once()
+        mt.start.assert_not_called()
+
+    def test_start_no_channels_raises(self, mock_system, mock_constants):
+        """start() raises ValueError when no channels have been added."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            with pytest.raises(ValueError, match="[Nn]o channels|channel"):
+                do.start()
+
+
+class TestDigitalOutputGetters:
+    """Getters delegate to the nidaqmx task properties."""
+
+    def test_channel_list(self, mock_system, mock_constants):
+        """channel_list returns names tracked by the nidaqmx task."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("led_1", lines="Dev1/port1/line0")
+            do.add_channel("led_2", lines="Dev1/port1/line1")
+
+        assert do.channel_list == ["led_1", "led_2"]
+
+    def test_number_of_ch(self, mock_system, mock_constants):
+        """number_of_ch returns count from the nidaqmx task."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            assert do.number_of_ch == 0
+            do.add_channel("led_1", lines="Dev1/port1/line0")
+            assert do.number_of_ch == 1
+            do.add_channel("led_2", lines="Dev1/port1/line1")
+            assert do.number_of_ch == 2
+
+    def test_channel_list_empty_initially(self, mock_system, mock_constants):
+        """channel_list is empty on a new task before any channels are added."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            assert do.channel_list == []
 
 
 class TestDigitalOutputWrite:
-    """Task group 10: DigitalOutput.write() (on-demand) tests."""
+    """write() performs on-demand single-sample writes."""
 
-    def test_write_single_bool(self):
+    def test_write_single_bool(self, mock_system, mock_constants):
         """write(True) passes True to task.write()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wb")
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("led", lines="Dev1/port1/line0")
-            do.initiate()
             do.write(True)
 
-            mock_task.write.assert_called_once_with(True)
+        mt.write.assert_called_once_with(True)
 
-    def test_write_single_int(self):
+    def test_write_single_int(self, mock_system, mock_constants):
         """write(1) converts to True and passes to task.write()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wi")
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("led", lines="Dev1/port1/line0")
-            do.initiate()
             do.write(1)
 
-            mock_task.write.assert_called_once_with(True)
+        mt.write.assert_called_once_with(True)
 
-    def test_write_list(self):
+    def test_write_list(self, mock_system, mock_constants):
         """write([True, False, True, False]) converts to bools and passes."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wl")
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("leds", lines="Dev1/port1/line0:3")
-            do.initiate()
             do.write([True, False, True, False])
 
-            mock_task.write.assert_called_once_with([True, False, True, False])
+        mt.write.assert_called_once_with([True, False, True, False])
 
-    def test_write_numpy_array(self):
+    def test_write_numpy_array(self, mock_system, mock_constants):
         """write(np.array([1, 0, 1, 0])) converts to list of bools."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wn")
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("leds", lines="Dev1/port1/line0:3")
-            do.initiate()
             do.write(np.array([1, 0, 1, 0]))
 
-            mock_task.write.assert_called_once_with([True, False, True, False])
+        mt.write.assert_called_once_with([True, False, True, False])
 
-    def test_write_calls_task_write(self):
-        """write() delegates to task.write() with the data."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wd")
+    def test_write_calls_task_write(self, mock_system, mock_constants):
+        """write() delegates to task.write()."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
             do.write(False)
 
-            mock_task.write.assert_called_once()
+        mt.write.assert_called_once()
 
 
 class TestDigitalOutputWriteContinuous:
-    """Task group 11: DigitalOutput.write_continuous() tests."""
+    """write_continuous() writes buffered data in clocked mode."""
 
-    def test_multi_line_2d_transposed(self):
+    def test_multi_line_2d_transposed(self, mock_system, mock_constants):
         """write_continuous() transposes (n_samples, n_lines) to (n_lines, n_samples)."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wc2d", sample_rate=1000)
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0:3")
-            do.initiate()
-
             data = np.array([[1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 0, 0]])  # (3, 4)
             do.write_continuous(data)
 
-            call_args = mock_task.write.call_args
-            written_data = call_args[0][0]
-            assert len(written_data) == 4  # n_lines
-            assert len(written_data[0]) == 3  # n_samples
-            assert call_args[1]["auto_start"] is True
+        call_args = mt.write.call_args
+        written_data = call_args[0][0]
+        assert len(written_data) == 4  # n_lines (was rows after transpose)
+        assert len(written_data[0]) == 3  # n_samples
+        assert call_args.kwargs["auto_start"] is True
+        # Known Pitfall #7: write data must be bool
+        assert all(isinstance(v, bool) for row in written_data for v in row)
 
-    def test_single_line_1d_written_directly(self):
+    def test_single_line_1d_written_directly(self, mock_system, mock_constants):
         """write_continuous() writes 1D array directly for single line."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wc1d", sample_rate=1000)
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
-
             data = np.array([1, 0, 1, 0, 1])
             do.write_continuous(data)
 
-            call_args = mock_task.write.call_args
-            written_data = call_args[0][0]
-            assert written_data == [1, 0, 1, 0, 1]
+        call_args = mt.write.call_args
+        written_data = call_args[0][0]
+        assert written_data == [True, False, True, False, True]
 
-    def test_raises_in_on_demand_mode(self):
-        """write_continuous() raises RuntimeError in on-demand mode."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wcod")
+    def test_raises_in_on_demand_mode(self, mock_system, mock_constants):
+        """write_continuous() raises RuntimeError when mode is on_demand."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=None)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
-
             with pytest.raises(RuntimeError, match="clocked mode"):
                 do.write_continuous(np.array([1, 0, 1]))
 
-    def test_auto_start_true(self):
+    def test_auto_start_true(self, mock_system, mock_constants):
         """write_continuous() calls task.write() with auto_start=True."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_wcas", sample_rate=1000)
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
-
             do.write_continuous(np.array([1, 0, 1]))
 
-            call_args = mock_task.write.call_args
-            assert call_args[1]["auto_start"] is True
+        call_args = mt.write.call_args
+        assert call_args.kwargs["auto_start"] is True
 
 
 class TestDigitalOutputClearTask:
-    """Task group 12: DigitalOutput.clear_task() and context manager tests."""
+    """clear_task() releases hardware resources safely."""
 
-    def test_clear_task_closes_initiated_task(self):
-        """clear_task() calls task.close() on an initiated task."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
+    def test_closes_task(self, mock_system, mock_constants):
+        """clear_task() calls task.close() on the nidaqmx task."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
 
-            do = DigitalOutput(task_name="do_clear")
-            do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
+        do.clear_task()
+        mt.close.assert_called_once()
+
+    def test_sets_task_none(self, mock_system, mock_constants):
+        """clear_task() sets self.task to None."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        do.clear_task()
+        assert do.task is None
+
+    def test_multiple_calls_safe(self, mock_system, mock_constants):
+        """Calling clear_task() twice does not raise."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        do.clear_task()
+        do.clear_task()  # Must not raise
+
+    def test_exception_warns(self, mock_system, mock_constants):
+        """clear_task() emits a warning when task.close() raises."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        mt.close.side_effect = OSError("hw error")
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
             do.clear_task()
 
-            mock_task.close.assert_called_once()
-            assert do.task is None
+        assert len(w) >= 1
+        assert "hw error" in str(w[0].message)
+        assert do.task is None
 
-    def test_clear_task_multiple_calls(self):
-        """clear_task() called twice does not raise."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
 
-            do = DigitalOutput(task_name="do_multi")
-            do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
-            do.clear_task()
-            do.clear_task()  # Should not raise
+class TestDigitalOutputContextManager:
+    """DigitalOutput implements the context manager protocol."""
 
-    def test_clear_task_never_initiated(self):
-        """clear_task() on a never-initiated task does not raise."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_noinit")
-            do.clear_task()  # Should not raise
-
-    def test_clear_task_exception_warns_not_propagated(self):
-        """clear_task() emits a warning if close() raises, does not propagate."""
-        import warnings
-
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
-
-            do = DigitalOutput(task_name="do_warn")
-            do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
-            mock_task.close.side_effect = OSError("hw error")
-
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                do.clear_task()  # must not raise
-
-            assert len(w) >= 1
-            assert "hw error" in str(w[0].message)
-
-    def test_context_manager_enter_returns_self(self):
+    def test_enter_returns_self(self, mock_system, mock_constants):
         """__enter__ returns the DigitalOutput instance."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
 
-            do = DigitalOutput(task_name="do_ctx")
-            with do as ctx:
-                assert ctx is do
+        result = do.__enter__()
+        assert result is do
 
-    def test_context_manager_exit_calls_clear_task(self):
+    def test_exit_calls_clear(self, mock_system, mock_constants):
         """__exit__ calls clear_task()."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalOutput
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        do.clear_task = MagicMock()
 
-            do = DigitalOutput(task_name="do_exit")
-            do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
+        do.__exit__(None, None, None)
+        do.clear_task.assert_called_once()
 
+    def test_cleanup_on_exception(self, mock_system, mock_constants):
+        """clear_task() is called even when the with-block raises."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        cleared = []
+
+        def _tracking_clear():
+            cleared.append(True)
+            if do.task is not None:
+                do.task.close()
+
+        do.clear_task = _tracking_clear
+
+        with pytest.raises(RuntimeError):
             with do:
-                pass
+                raise RuntimeError("body error")
 
-            mock_task.close.assert_called_once()
+        assert cleared
 
-    def test_context_manager_cleanup_on_exception(self):
-        """__exit__ still calls clear_task() when exception occurs."""
-        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+
+class TestDigitalOutputInitiateRemoved:
+    """initiate() and old internal methods must not exist in the new architecture."""
+
+    def test_no_initiate_method(self, mock_system, mock_constants):
+        """initiate() method does not exist on DigitalOutput."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(do, "initiate")
+
+    def test_no_add_channels_method(self, mock_system, mock_constants):
+        """_add_channels() internal method no longer exists."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(do, "_add_channels")
+
+    def test_no_create_task_method(self, mock_system, mock_constants):
+        """_create_task() internal method no longer exists."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert not hasattr(do, "_create_task")
+
+
+class TestDigitalOutputSaveConfig:
+    """save_config() serialises DigitalOutput configuration to TOML."""
+
+    def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
+        """save_config() creates a valid TOML file."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+
+        path = tmp_path / "do_config.toml"
+        do.save_config(path)
+        assert path.exists()
+
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        assert "task" in data
+        assert "channels" in data
+
+    def test_task_section_name(self, mock_system, mock_constants, tmp_path):
+        """[task] section contains the task name."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, task_name="my_leds")
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["name"] == "my_leds"
+
+    def test_task_section_type_digital_output(self, mock_system, mock_constants, tmp_path):
+        """[task] type field is 'digital_output'."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["type"] == "digital_output"
+
+    def test_task_section_clocked_includes_sample_rate(
+        self, mock_system, mock_constants, tmp_path
+    ):
+        """[task] section includes sample_rate for clocked mode."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=2000)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["sample_rate"] == 2000
+
+    def test_task_section_on_demand_no_sample_rate(
+        self, mock_system, mock_constants, tmp_path
+    ):
+        """[task] section omits sample_rate for on-demand mode."""
+        ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=None)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert "sample_rate" not in data["task"]
+
+    def test_channel_entries(self, mock_system, mock_constants, tmp_path):
+        """[[channels]] entries contain name and lines."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        channels = data["channels"]
+        assert len(channels) == 1
+        ch = channels[0]
+        assert ch["name"] == "leds"
+        assert ch["lines"] == "Dev1/port1/line0:3"
+
+    def test_multiple_channels(self, mock_system, mock_constants, tmp_path):
+        """All channels are serialised to [[channels]] entries."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+            do.add_channel("relays", lines="Dev1/port2/line0:7")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert len(data["channels"]) == 2
+        names = {ch["name"] for ch in data["channels"]}
+        assert names == {"leds", "relays"}
+
+
+class TestDigitalOutputFromConfig:
+    """from_config() creates a DigitalOutput from a TOML file."""
+
+    def _write_config(self, tmp_path, content: str):
+        """Write a TOML string to a temporary file and return the path."""
+        path = tmp_path / "config.toml"
+        path.write_text(content)
+        return path
+
+    def test_creates_task_from_toml(self, mock_system, mock_constants, tmp_path):
+        """from_config() creates a DigitalOutput with the name from [task]."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "leds"
+type = "digital_output"
+
+[[channels]]
+name = "led_group"
+lines = "Dev1/port1/line0:3"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ) as mock_cls,
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
             from nidaqwrapper.digital import DigitalOutput
 
-            do = DigitalOutput(task_name="do_exc")
-            do.add_channel("ch", lines="Dev1/port1/line0")
-            do.initiate()
+            do = DigitalOutput.from_config(path)
 
-            with pytest.raises(RuntimeError):
-                with do:
-                    raise RuntimeError("test error")
+        mock_cls.assert_called_once_with(new_task_name="leds")
+        assert do.task_name == "leds"
 
-            mock_task.close.assert_called_once()
+    def test_adds_channels(self, mock_system, mock_constants, tmp_path):
+        """from_config() calls add_channel() for each [[channels]] entry."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "leds"
+type = "digital_output"
+
+[[channels]]
+name = "led_group"
+lines = "Dev1/port1/line0:3"
+
+[[channels]]
+name = "relays"
+lines = "Dev1/port2/line0:7"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            DigitalOutput.from_config(path)
+
+        assert mock_ni_task.do_channels.add_do_chan.call_count == 2
+
+    def test_clocked_mode_from_config(self, mock_system, mock_constants, tmp_path):
+        """from_config() sets clocked mode when sample_rate is in [task]."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[task]
+name = "pattern_gen"
+type = "digital_output"
+sample_rate = 3000
+
+[[channels]]
+name = "ch"
+lines = "Dev1/port1/line0"
+""",
+        )
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput.from_config(path)
+
+        assert do.mode == "clocked"
+        assert do.sample_rate == 3000
+
+    def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when [task] section is missing."""
+        path = self._write_config(
+            tmp_path,
+            """\
+[[channels]]
+name = "ch"
+lines = "Dev1/port1/line0"
+""",
+        )
+        system = mock_system(task_names=[])
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            with pytest.raises(ValueError, match="task"):
+                DigitalOutput.from_config(path)
+
+    def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises an error on syntactically invalid TOML."""
+        path = self._write_config(tmp_path, "not = valid [ toml {\n")
+
+        from nidaqwrapper.digital import DigitalOutput
+
+        with pytest.raises(Exception):  # tomllib.TOMLDecodeError
+            DigitalOutput.from_config(path)
+
+
+class TestDigitalOutputConfigRoundtrip:
+    """save_config() + from_config() round-trip preserves task configuration."""
+
+    def test_roundtrip_on_demand(self, mock_system, mock_constants, tmp_path):
+        """On-demand config survives a save/load cycle."""
+        ctx, do, _ = _build_do(
+            mock_system, mock_constants, task_name="roundtrip_do", sample_rate=None
+        )
+        with ctx:
+            do.add_channel("leds", lines="Dev1/port1/line0:3")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+
+        system2 = mock_system(task_names=[])
+        mock_ni_task2 = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system2,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task2,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do2 = DigitalOutput.from_config(path)
+
+        assert do2.task_name == "roundtrip_do"
+        assert do2.sample_rate is None
+        assert do2.mode == "on_demand"
+        kwargs = mock_ni_task2.do_channels.add_do_chan.call_args.kwargs
+        assert kwargs["lines"] == "Dev1/port1/line0:3"
+        assert kwargs["name_to_assign_to_lines"] == "leds"
+
+    def test_roundtrip_clocked(self, mock_system, mock_constants, tmp_path):
+        """Clocked config survives a save/load cycle."""
+        ctx, do, _ = _build_do(
+            mock_system, mock_constants, task_name="pattern_gen", sample_rate=4000
+        )
+        with ctx:
+            do.add_channel("relays", lines="Dev1/port2/line0:7")
+
+        path = tmp_path / "config.toml"
+        do.save_config(path)
+
+        system2 = mock_system(task_names=[])
+        mock_ni_task2 = _make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system2,
+            ),
+            patch(
+                "nidaqwrapper.digital.nidaqmx.task.Task",
+                return_value=mock_ni_task2,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do2 = DigitalOutput.from_config(path)
+
+        assert do2.task_name == "pattern_gen"
+        assert do2.sample_rate == 4000
+        assert do2.mode == "clocked"

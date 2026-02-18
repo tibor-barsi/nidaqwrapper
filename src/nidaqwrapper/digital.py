@@ -5,6 +5,13 @@ on-demand (single-sample) and clocked (continuous/buffered) operation modes.
 Digital channels use NI line specification strings rather than device/channel
 indices.
 
+Architecture
+------------
+Direct delegation: the nidaqmx Task is created immediately in the constructor.
+:meth:`add_channel` delegates straight to ``task.di_channels.add_di_chan()``
+(or ``do_channels.add_do_chan()``). The nidaqmx Task object is the single
+source of truth; no intermediate channel dict is maintained.
+
 Notes
 -----
 This is a new module — no LDAQ/OpenEOL source to consolidate. The design
@@ -13,6 +20,7 @@ follows the patterns from NITask and NITaskOutput for consistency.
 
 from __future__ import annotations
 
+import pathlib
 import warnings
 from typing import Any
 
@@ -68,6 +76,11 @@ def _expand_port_to_line_range(lines: str) -> str:
 class DigitalInput:
     """Programmatic digital input task supporting on-demand and clocked modes.
 
+    The nidaqmx hardware task is created immediately at construction.
+    Channels are added via :meth:`add_channel` which delegates directly to the
+    nidaqmx task. Call :meth:`start` to configure timing and optionally start
+    acquisition.
+
     Parameters
     ----------
     task_name : str
@@ -88,7 +101,7 @@ class DigitalInput:
 
     >>> di = DigitalInput(task_name='switches')
     >>> di.add_channel('sw1', lines='Dev1/port0/line0:3')
-    >>> di.initiate()
+    >>> di.start()
     >>> data = di.read()
     >>> di.clear_task()
 
@@ -96,7 +109,7 @@ class DigitalInput:
 
     >>> di = DigitalInput(task_name='fast_di', sample_rate=1000)
     >>> di.add_channel('signals', lines='Dev1/port0/line0:7')
-    >>> di.initiate()
+    >>> di.start(start_task=True)
     >>> data = di.read_all_available()
     >>> di.clear_task()
     """
@@ -105,14 +118,12 @@ class DigitalInput:
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode: str = "on_demand" if sample_rate is None else "clocked"
-        self.channels: dict[str, dict[str, Any]] = {}
-        self.task: Any = None  # nidaqmx.Task instance after initiate()
 
         # Discover connected devices
         system = nidaqmx.system.System.local()
         self.device_list: list[str] = [dev.name for dev in system.devices]
 
-        # Check for duplicate task name in NI MAX
+        # Check for duplicate task name in NI MAX before allocating a handle
         existing_tasks = system.tasks.task_names
         if task_name in existing_tasks:
             raise ValueError(
@@ -120,8 +131,33 @@ class DigitalInput:
                 "Choose a unique name."
             )
 
+        # Track original add_channel() parameters for TOML serialisation.
+        # The nidaqmx task stores resolved channel objects; we need the
+        # original human-readable values to write a config file.
+        self._channel_configs: list[dict[str, Any]] = []
+
+        # Create the nidaqmx task immediately — it is the single source of truth
+        self.task = nidaqmx.task.Task(new_task_name=task_name)
+
+    # -- Introspection properties -------------------------------------------
+
+    @property
+    def channel_list(self) -> list[str]:
+        """List of channel names registered with the nidaqmx task."""
+        return list(self.task.channel_names)
+
+    @property
+    def number_of_ch(self) -> int:
+        """Number of channels registered with the nidaqmx task."""
+        return len(self.task.channel_names)
+
+    # -- Channel configuration -----------------------------------------------
+
     def add_channel(self, channel_name: str, lines: str) -> None:
         """Add a digital input channel by line specification.
+
+        Delegates directly to ``task.di_channels.add_di_chan()`` on the
+        underlying nidaqmx task.
 
         Parameters
         ----------
@@ -137,39 +173,54 @@ class DigitalInput:
             If ``channel_name`` is already used or ``lines`` are already
             assigned to another channel.
         """
-        if channel_name in self.channels:
+        # Duplicate name detection: check what nidaqmx already knows about
+        if channel_name in self.task.channel_names:
             raise ValueError(
                 f"Channel name '{channel_name}' already exists. "
                 "Use a unique name."
             )
 
-        for existing_name, existing_config in self.channels.items():
-            if existing_config["lines"] == lines:
+        # Expand port-only spec to explicit line range before duplicate check
+        expanded_lines = _expand_port_to_line_range(lines)
+
+        # Duplicate lines detection: iterate the live task channels
+        for ch in self.task.di_channels:
+            if ch.physical_channel.name == expanded_lines:
                 raise ValueError(
                     f"Lines '{lines}' are already assigned to channel "
-                    f"'{existing_name}'. Each channel must use unique lines."
+                    f"'{ch.name}'. Each channel must use unique lines."
                 )
 
-        self.channels[channel_name] = {"lines": lines}
+        self.task.di_channels.add_di_chan(
+            lines=expanded_lines,
+            name_to_assign_to_lines=channel_name,
+            line_grouping=constants.LineGrouping.CHAN_PER_LINE,
+        )
 
-    def initiate(self, start_task: bool = True) -> None:
-        """Create the underlying nidaqmx task and configure channels/timing.
+        # Record original (pre-expansion) lines for human-readable TOML output
+        self._channel_configs.append({"name": channel_name, "lines": lines})
+
+    # -- Task lifecycle -------------------------------------------------------
+
+    def start(self, start_task: bool = False) -> None:
+        """Configure timing and optionally start acquisition.
 
         Parameters
         ----------
         start_task : bool, optional
-            If ``True`` (default) and mode is ``'clocked'``, the task is
-            started after configuration. On-demand mode does not start
-            the task regardless of this flag.
-        """
-        self.task = nidaqmx.Task()
+            If ``True`` and mode is ``'clocked'``, the task is started after
+            timing configuration. On-demand mode never starts the task
+            regardless of this flag. Default is ``False``.
 
-        for ch_name, ch_config in self.channels.items():
-            lines = _expand_port_to_line_range(ch_config["lines"])
-            self.task.di_channels.add_di_chan(
-                lines=lines,
-                name_to_assign_to_lines=ch_name,
-                line_grouping=constants.LineGrouping.CHAN_PER_LINE,
+        Raises
+        ------
+        ValueError
+            If no channels have been added to the task.
+        """
+        if not self.task.channel_names:
+            raise ValueError(
+                "Cannot start: no channels have been added to this task. "
+                "Call add_channel() before start()."
             )
 
         if self.mode == "clocked":
@@ -179,6 +230,8 @@ class DigitalInput:
             )
             if start_task:
                 self.task.start()
+
+    # -- Data acquisition ----------------------------------------------------
 
     def read(self) -> np.ndarray:
         """Read a single sample from all digital input lines (on-demand).
@@ -229,27 +282,125 @@ class DigitalInput:
             return arr.reshape(-1, 1)
         return arr.T
 
+    # -- Cleanup -------------------------------------------------------------
+
     def clear_task(self) -> None:
         """Close the underlying nidaqmx task and release hardware resources.
 
         Safe to call multiple times or when no task has been initiated.
         """
-        if self.task is not None:
+        if hasattr(self, "task") and self.task is not None:
             try:
                 self.task.close()
             except Exception as exc:
                 warnings.warn(str(exc), stacklevel=2)
             self.task = None
 
+    # -- TOML config persistence ---------------------------------------------
+
+    def save_config(self, path: str | pathlib.Path) -> None:
+        """Serialise the task configuration to a TOML file.
+
+        Writes a human-readable TOML file that can be loaded back with
+        :meth:`from_config` to recreate the same task on any compatible
+        hardware.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Destination file path. The file is created or overwritten.
+
+        Notes
+        -----
+        TOML is generated with simple string formatting — no third-party
+        library is required for writing. The ``sample_rate`` key is only
+        written for clocked-mode tasks; on-demand tasks omit it entirely
+        so that ``from_config`` correctly restores the mode.
+        """
+        lines: list[str] = []
+
+        # [task] section
+        lines.append("[task]")
+        lines.append(f'name = "{self.task_name}"')
+        lines.append('type = "digital_input"')
+        if self.sample_rate is not None:
+            lines.append(f"sample_rate = {self.sample_rate}")
+        lines.append("")
+
+        # [[channels]] entries — use original (pre-expansion) lines string
+        for cfg in self._channel_configs:
+            lines.append("[[channels]]")
+            lines.append(f'name = "{cfg["name"]}"')
+            lines.append(f'lines = "{cfg["lines"]}"')
+            lines.append("")
+
+        pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+    @classmethod
+    def from_config(cls, path: str | pathlib.Path) -> DigitalInput:
+        """Create a :class:`DigitalInput` from a TOML configuration file.
+
+        Reads the TOML file produced by :meth:`save_config`, constructs a new
+        task, and calls :meth:`add_channel` for every ``[[channels]]`` entry.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Path to a TOML file produced by :meth:`save_config`.
+
+        Returns
+        -------
+        DigitalInput
+            A fully configured task (channels added, not yet started).
+
+        Raises
+        ------
+        ValueError
+            If the ``[task]`` section is absent.
+        tomllib.TOMLDecodeError
+            On syntactically invalid TOML (propagated from the parser).
+        """
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+
+        if "task" not in data:
+            raise ValueError(
+                "TOML file is missing required [task] section."
+            )
+
+        task_section = data["task"]
+        sample_rate = task_section.get("sample_rate", None)
+
+        task = cls(task_section["name"], sample_rate=sample_rate)
+
+        for ch in data.get("channels", []):
+            task.add_channel(channel_name=ch["name"], lines=ch["lines"])
+
+        return task
+
+    # -- Context manager -----------------------------------------------------
+
     def __enter__(self) -> DigitalInput:
+        """Enter the context manager."""
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context manager, calling clear_task() unconditionally."""
         self.clear_task()
 
 
 class DigitalOutput:
     """Programmatic digital output task supporting on-demand and clocked modes.
+
+    The nidaqmx hardware task is created immediately at construction.
+    Channels are added via :meth:`add_channel` which delegates directly to the
+    nidaqmx task. Call :meth:`start` to configure timing and optionally begin
+    output.
 
     Parameters
     ----------
@@ -271,7 +422,7 @@ class DigitalOutput:
 
     >>> do = DigitalOutput(task_name='leds')
     >>> do.add_channel('led_1', lines='Dev1/port1/line0')
-    >>> do.initiate()
+    >>> do.start()
     >>> do.write(True)
     >>> do.clear_task()
 
@@ -279,7 +430,7 @@ class DigitalOutput:
 
     >>> do = DigitalOutput(task_name='pattern_gen', sample_rate=1000)
     >>> do.add_channel('lines', lines='Dev1/port1/line0:3')
-    >>> do.initiate()
+    >>> do.start(start_task=True)
     >>> do.write_continuous(data)
     >>> do.clear_task()
     """
@@ -288,8 +439,6 @@ class DigitalOutput:
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode: str = "on_demand" if sample_rate is None else "clocked"
-        self.channels: dict[str, dict[str, Any]] = {}
-        self.task: Any = None
 
         system = nidaqmx.system.System.local()
         self.device_list: list[str] = [dev.name for dev in system.devices]
@@ -301,8 +450,31 @@ class DigitalOutput:
                 "Choose a unique name."
             )
 
+        # Track original add_channel() parameters for TOML serialisation
+        self._channel_configs: list[dict[str, Any]] = []
+
+        # Create the nidaqmx task immediately — it is the single source of truth
+        self.task = nidaqmx.task.Task(new_task_name=task_name)
+
+    # -- Introspection properties -------------------------------------------
+
+    @property
+    def channel_list(self) -> list[str]:
+        """List of channel names registered with the nidaqmx task."""
+        return list(self.task.channel_names)
+
+    @property
+    def number_of_ch(self) -> int:
+        """Number of channels registered with the nidaqmx task."""
+        return len(self.task.channel_names)
+
+    # -- Channel configuration -----------------------------------------------
+
     def add_channel(self, channel_name: str, lines: str) -> None:
         """Add a digital output channel by line specification.
+
+        Delegates directly to ``task.do_channels.add_do_chan()`` on the
+        underlying nidaqmx task.
 
         Parameters
         ----------
@@ -318,39 +490,54 @@ class DigitalOutput:
             If ``channel_name`` is already used or ``lines`` are already
             assigned to another channel.
         """
-        if channel_name in self.channels:
+        # Duplicate name detection: check what nidaqmx already knows about
+        if channel_name in self.task.channel_names:
             raise ValueError(
                 f"Channel name '{channel_name}' already exists. "
                 "Use a unique name."
             )
 
-        for existing_name, existing_config in self.channels.items():
-            if existing_config["lines"] == lines:
+        # Expand port-only spec to explicit line range before duplicate check
+        expanded_lines = _expand_port_to_line_range(lines)
+
+        # Duplicate lines detection: iterate the live task channels
+        for ch in self.task.do_channels:
+            if ch.physical_channel.name == expanded_lines:
                 raise ValueError(
                     f"Lines '{lines}' are already assigned to channel "
-                    f"'{existing_name}'. Each channel must use unique lines."
+                    f"'{ch.name}'. Each channel must use unique lines."
                 )
 
-        self.channels[channel_name] = {"lines": lines}
+        self.task.do_channels.add_do_chan(
+            lines=expanded_lines,
+            name_to_assign_to_lines=channel_name,
+            line_grouping=constants.LineGrouping.CHAN_PER_LINE,
+        )
 
-    def initiate(self, start_task: bool = True) -> None:
-        """Create the underlying nidaqmx task and configure channels/timing.
+        # Record original (pre-expansion) lines for human-readable TOML output
+        self._channel_configs.append({"name": channel_name, "lines": lines})
+
+    # -- Task lifecycle -------------------------------------------------------
+
+    def start(self, start_task: bool = False) -> None:
+        """Configure timing and optionally start output generation.
 
         Parameters
         ----------
         start_task : bool, optional
-            If ``True`` (default) and mode is ``'clocked'``, the task is
-            started after configuration. On-demand mode does not start
-            the task regardless of this flag.
-        """
-        self.task = nidaqmx.Task()
+            If ``True`` and mode is ``'clocked'``, the task is started after
+            timing configuration. On-demand mode never starts the task
+            regardless of this flag. Default is ``False``.
 
-        for ch_name, ch_config in self.channels.items():
-            lines = _expand_port_to_line_range(ch_config["lines"])
-            self.task.do_channels.add_do_chan(
-                lines=lines,
-                name_to_assign_to_lines=ch_name,
-                line_grouping=constants.LineGrouping.CHAN_PER_LINE,
+        Raises
+        ------
+        ValueError
+            If no channels have been added to the task.
+        """
+        if not self.task.channel_names:
+            raise ValueError(
+                "Cannot start: no channels have been added to this task. "
+                "Call add_channel() before start()."
             )
 
         if self.mode == "clocked":
@@ -360,6 +547,8 @@ class DigitalOutput:
             )
             if start_task:
                 self.task.start()
+
+    # -- Signal output -------------------------------------------------------
 
     def write(self, data: bool | int | list | np.ndarray) -> None:
         """Write a single sample to digital output lines (on-demand).
@@ -409,20 +598,113 @@ class DigitalOutput:
 
         self.task.write(write_data, auto_start=True)
 
+    # -- Cleanup -------------------------------------------------------------
+
     def clear_task(self) -> None:
         """Close the underlying nidaqmx task and release hardware resources.
 
         Safe to call multiple times or when no task has been initiated.
         """
-        if self.task is not None:
+        if hasattr(self, "task") and self.task is not None:
             try:
                 self.task.close()
             except Exception as exc:
                 warnings.warn(str(exc), stacklevel=2)
             self.task = None
 
+    # -- TOML config persistence ---------------------------------------------
+
+    def save_config(self, path: str | pathlib.Path) -> None:
+        """Serialise the task configuration to a TOML file.
+
+        Writes a human-readable TOML file that can be loaded back with
+        :meth:`from_config` to recreate the same task on any compatible
+        hardware.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Destination file path. The file is created or overwritten.
+
+        Notes
+        -----
+        TOML is generated with simple string formatting — no third-party
+        library is required for writing. The ``sample_rate`` key is only
+        written for clocked-mode tasks; on-demand tasks omit it entirely
+        so that ``from_config`` correctly restores the mode.
+        """
+        lines: list[str] = []
+
+        # [task] section
+        lines.append("[task]")
+        lines.append(f'name = "{self.task_name}"')
+        lines.append('type = "digital_output"')
+        if self.sample_rate is not None:
+            lines.append(f"sample_rate = {self.sample_rate}")
+        lines.append("")
+
+        # [[channels]] entries — use original (pre-expansion) lines string
+        for cfg in self._channel_configs:
+            lines.append("[[channels]]")
+            lines.append(f'name = "{cfg["name"]}"')
+            lines.append(f'lines = "{cfg["lines"]}"')
+            lines.append("")
+
+        pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+    @classmethod
+    def from_config(cls, path: str | pathlib.Path) -> DigitalOutput:
+        """Create a :class:`DigitalOutput` from a TOML configuration file.
+
+        Reads the TOML file produced by :meth:`save_config`, constructs a new
+        task, and calls :meth:`add_channel` for every ``[[channels]]`` entry.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Path to a TOML file produced by :meth:`save_config`.
+
+        Returns
+        -------
+        DigitalOutput
+            A fully configured task (channels added, not yet started).
+
+        Raises
+        ------
+        ValueError
+            If the ``[task]`` section is absent.
+        tomllib.TOMLDecodeError
+            On syntactically invalid TOML (propagated from the parser).
+        """
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+
+        if "task" not in data:
+            raise ValueError(
+                "TOML file is missing required [task] section."
+            )
+
+        task_section = data["task"]
+        sample_rate = task_section.get("sample_rate", None)
+
+        task = cls(task_section["name"], sample_rate=sample_rate)
+
+        for ch in data.get("channels", []):
+            task.add_channel(channel_name=ch["name"], lines=ch["lines"])
+
+        return task
+
+    # -- Context manager -----------------------------------------------------
+
     def __enter__(self) -> DigitalOutput:
+        """Enter the context manager."""
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context manager, calling clear_task() unconditionally."""
         self.clear_task()
