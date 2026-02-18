@@ -582,10 +582,41 @@ class TestDigitalIO:
 
         assert di.task is None
 
-    @pytest.mark.skip(reason="Phase 6b not complete — wrapper digital integration pending")
     def test_wrapper_digital_integration(self) -> None:
-        """Placeholder: test wrapper.read_digital / write_digital."""
-        pass
+        """NIDAQWrapper.read_digital() and write_digital() work with real hardware.
+
+        Configures a wrapper with digital input (Dev1 port0/line0) and digital
+        output (Dev1 port1/line0), connects, writes True/False, reads, and
+        disconnects.
+        """
+        if DI_LINES is None or DO_LINES is None:
+            pytest.skip("Both DI and DO hardware required for wrapper digital test")
+
+        from nidaqwrapper import DigitalInput, DigitalOutput, NIDAQWrapper
+
+        di = DigitalInput("hw_wrap_di")
+        di.add_channel("di_ch", lines=DI_LINES)
+
+        do = DigitalOutput("hw_wrap_do")
+        do.add_channel("do_ch", lines=DO_LINES)
+
+        wrapper = NIDAQWrapper()
+        wrapper.configure(task_digital_in=di, task_digital_out=do)
+
+        try:
+            result = wrapper.connect()
+            assert result is True
+
+            # Write True, then read digital input
+            wrapper.write_digital(True)
+            data = wrapper.read_digital()
+            assert isinstance(data, np.ndarray)
+            assert data.size >= 1
+
+            # Write False
+            wrapper.write_digital(False)
+        finally:
+            wrapper.disconnect()
 
 
 # ===========================================================================
