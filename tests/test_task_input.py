@@ -1095,3 +1095,687 @@ class TestInitiateRemoved:
         with ctx:
             pass
         assert not hasattr(task, "_setup_task")
+
+
+# ===========================================================================
+# Task Group 3: TOML config save/load
+# ===========================================================================
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[no-redef]
+
+
+class TestSaveConfig:
+    """save_config() serialises the task configuration to TOML."""
+
+    def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
+        """save_config() creates a file that can be parsed as TOML."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        assert path.exists()
+
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        assert "task" in data
+        assert "devices" in data
+        assert "channels" in data
+
+    def test_task_section(self, mock_system, mock_constants, tmp_path):
+        """[task] section contains name, sample_rate, and type='input'."""
+        ctx, task, mt = _build(mock_system, mock_constants, sample_rate=51200)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["task"]["name"] == "test"
+        assert data["task"]["sample_rate"] == 51200
+        assert data["task"]["type"] == "input"
+
+    def test_devices_section(self, mock_system, mock_constants, tmp_path):
+        """[devices] section contains unique device aliases for used devices."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+            task.add_channel(
+                "accel_y", device_ind=1, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        # Each used device gets an alias in the [devices] section
+        devices = data["devices"]
+        assert len(devices) == 2
+        device_names = set(devices.values())
+        assert "cDAQ1Mod1" in device_names
+        assert "cDAQ1Mod2" in device_names
+
+    def test_channel_entries(self, mock_system, mock_constants, tmp_path):
+        """[[channels]] entries contain name, device alias, channel, units, etc."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=2,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+                min_val=-50.0, max_val=50.0,
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        channels = data["channels"]
+        assert len(channels) == 1
+        ch = channels[0]
+        assert ch["name"] == "accel_x"
+        assert ch["channel"] == 2
+        assert ch["sensitivity"] == 100.0
+        assert ch["sensitivity_units"] == "mV/g"
+        assert ch["units"] == "g"
+        assert ch["min_val"] == -50.0
+        assert ch["max_val"] == 50.0
+        # Device alias must reference a key in [devices]
+        assert ch["device"] in data["devices"]
+
+    def test_force_channel(self, mock_system, mock_constants, tmp_path):
+        """Force/IEPE channel is saved correctly in TOML."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "force_1", device_ind=0, channel_ind=0,
+                sensitivity=22.5, sensitivity_units="mV/N", units="N",
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        ch = data["channels"][0]
+        assert ch["name"] == "force_1"
+        assert ch["sensitivity"] == 22.5
+        assert ch["sensitivity_units"] == "mV/N"
+        assert ch["units"] == "N"
+
+    def test_min_val_zero_preserved(self, mock_system, mock_constants, tmp_path):
+        """min_val=0.0 is saved in TOML (not treated as falsy)."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+                min_val=0.0, max_val=50.0,
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        ch = data["channels"][0]
+        assert ch["min_val"] == 0.0
+        assert ch["max_val"] == 50.0
+
+    def test_voltage_channel_no_sensitivity(self, mock_system, mock_constants, tmp_path):
+        """Voltage channels omit sensitivity/sensitivity_units from TOML."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel("v1", device_ind=0, channel_ind=0, units="V")
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        ch = data["channels"][0]
+        assert ch["units"] == "V"
+        assert "sensitivity" not in ch
+        assert "sensitivity_units" not in ch
+
+    def test_scale_channel(self, mock_system, mock_constants, tmp_path):
+        """Channel with custom scale saves scale value in TOML."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as ms:
+                ms.return_value.name = "v1_scale"
+                task.add_channel(
+                    "v1", device_ind=0, channel_ind=0,
+                    units="V", scale=(2500.0, -100.0),
+                )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        ch = data["channels"][0]
+        assert ch["scale"] == [2500.0, -100.0]
+
+    def test_min_max_omitted_when_none(self, mock_system, mock_constants, tmp_path):
+        """min_val/max_val are not in TOML when they were None."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+
+        ch = data["channels"][0]
+        assert "min_val" not in ch
+        assert "max_val" not in ch
+
+
+class TestFromConfig:
+    """from_config() creates an NITask from a TOML file."""
+
+    def _write_config(self, tmp_path, content):
+        """Write a TOML string to a temp file and return the path."""
+        path = tmp_path / "config.toml"
+        path.write_text(content)
+        return path
+
+    def test_creates_task_with_name(self, mock_system, mock_constants, tmp_path):
+        """from_config() creates a task with the name from [task] section."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "vibration_test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task) as mock_cls,
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        mock_cls.assert_called_once_with(new_task_name="vibration_test")
+        assert task.sample_rate == 25600
+
+    def test_resolves_device_alias(self, mock_system, mock_constants, tmp_path):
+        """from_config() resolves device alias to device index."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod2 = "cDAQ1Mod2"
+
+[[channels]]
+name = "accel_x"
+device = "mod2"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        # cDAQ1Mod2 is device_ind=1, so physical channel should be cDAQ1Mod2/ai0
+        kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
+        assert kwargs["physical_channel"] == "cDAQ1Mod2/ai0"
+
+    def test_multi_device_channels(self, mock_system, mock_constants, tmp_path):
+        """from_config() handles channels on different devices."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+mod2 = "cDAQ1Mod2"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+
+[[channels]]
+name = "accel_y"
+device = "mod2"
+channel = 1
+sensitivity = 50.0
+sensitivity_units = "mV/g"
+units = "g"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        assert mock_ni_task.ai_channels.add_ai_accel_chan.call_count == 2
+        calls = mock_ni_task.ai_channels.add_ai_accel_chan.call_args_list
+        phys_channels = {c.kwargs["physical_channel"] for c in calls}
+        assert "cDAQ1Mod1/ai0" in phys_channels
+        assert "cDAQ1Mod2/ai1" in phys_channels
+
+    def test_force_channel_from_config(self, mock_system, mock_constants, tmp_path):
+        """from_config() handles force/IEPE channels."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "force_1"
+device = "mod1"
+channel = 0
+sensitivity = 22.5
+sensitivity_units = "mV/N"
+units = "N"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        mock_ni_task.ai_channels.add_ai_force_iepe_chan.assert_called_once()
+        kwargs = mock_ni_task.ai_channels.add_ai_force_iepe_chan.call_args.kwargs
+        assert kwargs["sensitivity"] == 22.5
+
+    def test_min_val_zero_from_config(self, mock_system, mock_constants, tmp_path):
+        """from_config() preserves min_val=0.0 (not treated as falsy)."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+min_val = 0.0
+max_val = 50.0
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
+        assert kwargs["min_val"] == 0.0
+        assert kwargs["max_val"] == 50.0
+
+    def test_voltage_channel_from_config(self, mock_system, mock_constants, tmp_path):
+        """from_config() handles voltage channels (no sensitivity)."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "v1"
+device = "mod1"
+channel = 0
+units = "V"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        mock_ni_task.ai_channels.add_ai_voltage_chan.assert_called_once()
+
+    def test_channel_with_scale(self, mock_system, mock_constants, tmp_path):
+        """from_config() handles channels with scale parameter."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "v1"
+device = "mod1"
+channel = 0
+units = "V"
+scale = [2500.0, -100.0]
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as ms,
+        ):
+            ms.return_value.name = "v1_scale"
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        ms.assert_called_once()
+        scale_kwargs = ms.call_args.kwargs
+        assert scale_kwargs["slope"] == 2500.0
+        assert scale_kwargs["y_intercept"] == -100.0
+
+    def test_channel_with_min_max(self, mock_system, mock_constants, tmp_path):
+        """from_config() forwards min_val/max_val from TOML."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+min_val = -50.0
+max_val = 50.0
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            task = NITask.from_config(path)
+
+        kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
+        assert kwargs["min_val"] == -50.0
+        assert kwargs["max_val"] == 50.0
+
+    def test_invalid_device_alias_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when channel references unknown alias."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "accel_x"
+device = "nonexistent_module"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            with pytest.raises(ValueError, match="alias|device"):
+                NITask.from_config(path)
+
+    def test_device_not_in_system_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when device name not found in system."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[devices]
+mod1 = "NonExistentDevice"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+sensitivity = 100.0
+sensitivity_units = "mV/g"
+units = "g"
+""")
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            with pytest.raises(ValueError, match="device|not found"):
+                NITask.from_config(path)
+
+    def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when [task] section is missing."""
+        path = self._write_config(tmp_path, """\
+[devices]
+mod1 = "cDAQ1Mod1"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+units = "g"
+""")
+        system = mock_system(task_names=[])
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            with pytest.raises(ValueError, match="task"):
+                NITask.from_config(path)
+
+    def test_missing_devices_section_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises ValueError when [devices] section is missing."""
+        path = self._write_config(tmp_path, """\
+[task]
+name = "test"
+sample_rate = 25600
+type = "input"
+
+[[channels]]
+name = "accel_x"
+device = "mod1"
+channel = 0
+units = "g"
+""")
+        system = mock_system(task_names=[])
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            with pytest.raises(ValueError, match="devices"):
+                NITask.from_config(path)
+
+    def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
+        """from_config() raises an error on syntactically invalid TOML."""
+        path = self._write_config(tmp_path, "not = valid [ toml {\n")
+
+        from nidaqwrapper.task_input import NITask
+        with pytest.raises(Exception):  # tomllib.TOMLDecodeError
+            NITask.from_config(path)
+
+
+class TestConfigRoundtrip:
+    """save_config → from_config produces equivalent task configuration."""
+
+    def test_roundtrip_accel(self, mock_system, mock_constants, tmp_path):
+        """Accel channel survives a save/load roundtrip."""
+        # Create and configure original task
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+                min_val=-50.0, max_val=50.0,
+            )
+
+        path = tmp_path / "config.toml"
+        task.save_config(path)
+
+        # Load back via from_config
+        system = mock_system(task_names=[])
+        mock_ni_task2 = _make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+                  return_value=mock_ni_task2) as mock_cls,
+            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.task_input.constants", mock_constants),
+        ):
+            from nidaqwrapper.task_input import NITask
+            loaded = NITask.from_config(path)
+
+        # Verify the loaded task matches the original
+        mock_cls.assert_called_once_with(new_task_name="test")
+        assert loaded.sample_rate == 25600
+        mock_ni_task2.ai_channels.add_ai_accel_chan.assert_called_once()
+        kwargs = mock_ni_task2.ai_channels.add_ai_accel_chan.call_args.kwargs
+        assert kwargs["name_to_assign_to_channel"] == "accel_x"
+        assert kwargs["physical_channel"] == "cDAQ1Mod1/ai0"
+        assert kwargs["sensitivity"] == 100.0
+        assert kwargs["min_val"] == -50.0
+        assert kwargs["max_val"] == 50.0

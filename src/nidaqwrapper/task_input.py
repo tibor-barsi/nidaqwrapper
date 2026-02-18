@@ -19,6 +19,7 @@ is ``False`` and construction raises ``RuntimeError``.
 
 from __future__ import annotations
 
+import pathlib
 import warnings
 from typing import Any
 
@@ -92,6 +93,11 @@ class NITask:
             )
 
         self.sample_mode = constants.AcquisitionType.CONTINUOUS
+
+        # Track original add_channel() parameters for TOML serialisation.
+        # The nidaqmx task stores resolved constants; we need the original
+        # strings (e.g. "mV/g") to write a human-readable config file.
+        self._channel_configs: list[dict[str, Any]] = []
 
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
@@ -297,6 +303,21 @@ class NITask:
                 options["units"] = resolved_units
             self.task.ai_channels.add_ai_voltage_chan(**options)
 
+        # Record original parameters after a successful nidaqmx call so that
+        # save_config() can serialise human-readable strings (not resolved
+        # nidaqmx constants).
+        self._channel_configs.append({
+            "name": channel_name,
+            "device_ind": device_ind,
+            "channel_ind": channel_ind,
+            "sensitivity": sensitivity,
+            "sensitivity_units": sensitivity_units,
+            "units": units,
+            "scale": scale,
+            "min_val": min_val,
+            "max_val": max_val,
+        })
+
     # -- Task lifecycle ------------------------------------------------------
 
     def start(self, start_task: bool = False) -> None:
@@ -408,6 +429,183 @@ class NITask:
 
         if clear_task:
             self.clear_task()
+
+    # -- TOML config persistence --------------------------------------------
+
+    def save_config(self, path: str | pathlib.Path) -> None:
+        """Serialise the task configuration to a TOML file.
+
+        Writes a human-readable TOML file that can be loaded back with
+        :meth:`from_config` to recreate the same task on any compatible
+        hardware.  Device names are replaced by short aliases in
+        ``[devices]`` so that changing chassis enumeration only requires
+        editing one line per module.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Destination file path.  The file is created or overwritten.
+
+        Notes
+        -----
+        TOML is generated with simple string formatting — no third-party
+        library is required for writing.  ``min_val`` / ``max_val`` are
+        omitted when they were not provided (``None``); ``0.0`` is a
+        valid value and is preserved (uses ``is not None`` check).
+
+        Examples
+        --------
+        >>> task.save_config("/tmp/vibration.toml")
+        """
+        # Build alias → device_name map for every unique device used.
+        # Aliases are assigned in the order channels were added: dev0, dev1 …
+        device_alias: dict[int, str] = {}
+        for cfg in self._channel_configs:
+            ind = cfg["device_ind"]
+            if ind not in device_alias:
+                device_alias[ind] = f"dev{len(device_alias)}"
+
+        lines: list[str] = []
+
+        # [task] section
+        lines.append("[task]")
+        lines.append(f'name = "{self.task_name}"')
+        lines.append(f"sample_rate = {self.sample_rate}")
+        lines.append('type = "input"')
+        lines.append("")
+
+        # [devices] section
+        lines.append("[devices]")
+        for ind, alias in device_alias.items():
+            device_name = self.device_list[ind]
+            lines.append(f'{alias} = "{device_name}"')
+        lines.append("")
+
+        # [[channels]] entries
+        for cfg in self._channel_configs:
+            alias = device_alias[cfg["device_ind"]]
+            lines.append("[[channels]]")
+            lines.append(f'name = "{cfg["name"]}"')
+            lines.append(f'device = "{alias}"')
+            lines.append(f'channel = {cfg["channel_ind"]}')
+            if cfg["sensitivity"] is not None:
+                lines.append(f'sensitivity = {cfg["sensitivity"]}')
+            if cfg["sensitivity_units"] is not None:
+                lines.append(f'sensitivity_units = "{cfg["sensitivity_units"]}"')
+            lines.append(f'units = "{cfg["units"]}"')
+            if cfg["scale"] is not None:
+                scale = cfg["scale"]
+                if isinstance(scale, tuple):
+                    slope, y_intercept = float(scale[0]), float(scale[1])
+                else:
+                    slope, y_intercept = float(scale), 0.0
+                lines.append(f"scale = [{slope}, {y_intercept}]")
+            # Use is not None so that 0.0 is written correctly
+            if cfg["min_val"] is not None:
+                lines.append(f"min_val = {cfg['min_val']}")
+            if cfg["max_val"] is not None:
+                lines.append(f"max_val = {cfg['max_val']}")
+            lines.append("")
+
+        pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+    @classmethod
+    def from_config(cls, path: str | pathlib.Path) -> NITask:
+        """Create an :class:`NITask` from a TOML configuration file.
+
+        Reads the TOML file produced by :meth:`save_config`, constructs
+        a new task, and calls :meth:`add_channel` for every ``[[channels]]``
+        entry.  Device aliases are resolved to system device indices.
+
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            Path to a TOML file.
+
+        Returns
+        -------
+        NITask
+            A fully configured task (channels added, not yet started).
+
+        Raises
+        ------
+        ValueError
+            If the ``[task]`` or ``[devices]`` section is absent, if a
+            channel references an unknown device alias, or if a device
+            name is not present on the current system.
+        tomllib.TOMLDecodeError
+            On syntactically invalid TOML (propagated from the parser).
+
+        Examples
+        --------
+        >>> task = NITask.from_config("/tmp/vibration.toml")
+        >>> task.start()
+        """
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+
+        if "task" not in data:
+            raise ValueError(
+                "TOML file is missing required [task] section."
+            )
+        if "devices" not in data:
+            raise ValueError(
+                "TOML file is missing required [devices] section."
+            )
+
+        task_section = data["task"]
+        alias_to_name: dict[str, str] = data["devices"]
+
+        task = cls(task_section["name"], sample_rate=task_section["sample_rate"])
+
+        # Build name → index map from the live device list
+        name_to_ind: dict[str, int] = {
+            name: ind for ind, name in enumerate(task.device_list)
+        }
+
+        for ch in data.get("channels", []):
+            alias = ch["device"]
+            if alias not in alias_to_name:
+                raise ValueError(
+                    f"Channel '{ch['name']}' references unknown device alias "
+                    f"'{alias}'. Available aliases: {list(alias_to_name)}"
+                )
+
+            device_name = alias_to_name[alias]
+            if device_name not in name_to_ind:
+                raise ValueError(
+                    f"Device '{device_name}' (alias '{alias}') was not found "
+                    f"in the system. Available devices: {task.device_list}"
+                )
+
+            device_ind = name_to_ind[device_name]
+
+            # TOML arrays become Python lists; convert to tuple for add_channel()
+            raw_scale = ch.get("scale")
+            scale: float | tuple[float, float] | None
+            if raw_scale is not None:
+                scale = (float(raw_scale[0]), float(raw_scale[1]))
+            else:
+                scale = None
+
+            task.add_channel(
+                channel_name=ch["name"],
+                device_ind=device_ind,
+                channel_ind=ch["channel"],
+                sensitivity=ch.get("sensitivity"),
+                sensitivity_units=ch.get("sensitivity_units"),
+                units=ch.get("units"),
+                scale=scale,
+                min_val=ch.get("min_val"),
+                max_val=ch.get("max_val"),
+            )
+
+        return task
 
     def __enter__(self) -> NITask:
         """Enter the runtime context; return ``self``."""
