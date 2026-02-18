@@ -623,7 +623,8 @@ class NIDAQWrapper:
             if data.ndim == 2:
                 write_data = np.ascontiguousarray(data.T)
             else:
-                write_data = data
+                # 1D single-channel — ensure C-contiguous for nidaqmx C layer
+                write_data = np.ascontiguousarray(data)
 
             self._task_out.out_stream.output_buf_size = data.shape[0]
             self._task_out.write(write_data, auto_start=True)
