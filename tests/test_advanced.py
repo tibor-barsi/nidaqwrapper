@@ -85,52 +85,54 @@ def nidaqmx_mock():
 
 @pytest.fixture
 def advanced_module(nidaqmx_mock):
-    """Import the advanced module with mocked nidaqmx dependencies."""
+    """Import the advanced module with mocked nidaqmx dependencies.
+
+    Carefully saves and restores ALL affected sys.modules entries so
+    that other test files (test_utils, test_digital, etc.) are not
+    polluted by the mock nidaqmx references.
+    """
     import sys
 
-    # Mock nidaqmx at the module level
-    original_modules = {}
-    mocks = {
-        "nidaqmx": nidaqmx_mock,
-        "nidaqmx.task": nidaqmx_mock.task,
-        "nidaqmx.constants": nidaqmx_mock.constants,
-        "nidaqmx.errors": nidaqmx_mock.errors,
-        "nidaqmx.system": nidaqmx_mock.system,
-    }
+    # Modules that will be mocked or indirectly affected
+    _MOCK_TARGETS = [
+        "nidaqmx", "nidaqmx.constants", "nidaqmx.system",
+        "nidaqmx.task", "nidaqmx.errors",
+        "pyTrigger",
+    ]
+    _NIDAQWRAPPER_MODULES = [
+        "nidaqwrapper", "nidaqwrapper.advanced", "nidaqwrapper.wrapper",
+        "nidaqwrapper.utils", "nidaqwrapper.task_input",
+        "nidaqwrapper.task_output", "nidaqwrapper.digital",
+    ]
 
-    for mod_name, mock_obj in mocks.items():
-        if mod_name in sys.modules:
-            original_modules[mod_name] = sys.modules[mod_name]
-        sys.modules[mod_name] = mock_obj
+    # Save current state of all modules that will be touched
+    saved = {}
+    for mod_name in _MOCK_TARGETS + _NIDAQWRAPPER_MODULES:
+        saved[mod_name] = sys.modules.get(mod_name)
 
-    # Also mock pyTrigger
-    mock_pytrigger_mod = MagicMock()
-    if "pyTrigger" in sys.modules:
-        original_modules["pyTrigger"] = sys.modules["pyTrigger"]
-    sys.modules["pyTrigger"] = mock_pytrigger_mod
+    # Install mocks — reuse the nidaqmx_mock fixture object so that
+    # all submodule references (nidaqmx.constants, etc.) stay consistent
+    sys.modules["nidaqmx"] = nidaqmx_mock
+    sys.modules["nidaqmx.task"] = nidaqmx_mock.task
+    sys.modules["nidaqmx.constants"] = nidaqmx_mock.constants
+    sys.modules["nidaqmx.errors"] = nidaqmx_mock.errors
+    sys.modules["nidaqmx.system"] = nidaqmx_mock.system
+    sys.modules["pyTrigger"] = MagicMock()
 
-    # Force reimport
-    if "nidaqwrapper.advanced" in sys.modules:
-        del sys.modules["nidaqwrapper.advanced"]
+    # Remove cached nidaqwrapper modules so they reimport with mocked nidaqmx
+    for mod_name in _NIDAQWRAPPER_MODULES:
+        sys.modules.pop(mod_name, None)
 
     from nidaqwrapper import advanced
 
     yield advanced
 
-    # Cleanup
-    if "nidaqwrapper.advanced" in sys.modules:
-        del sys.modules["nidaqwrapper.advanced"]
-
-    for mod_name in mocks:
-        if mod_name in original_modules:
-            sys.modules[mod_name] = original_modules[mod_name]
-        else:
+    # Restore ALL modules to their pre-fixture state
+    for mod_name, original in saved.items():
+        if original is None:
             sys.modules.pop(mod_name, None)
-
-    if "pyTrigger" in original_modules:
-        sys.modules["pyTrigger"] = original_modules["pyTrigger"]
-    else:
-        sys.modules.pop("pyTrigger", None)
+        else:
+            sys.modules[mod_name] = original
 
 
 @pytest.fixture
