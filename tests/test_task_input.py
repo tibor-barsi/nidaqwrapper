@@ -163,18 +163,6 @@ class TestNITaskConstructor:
             task = NITask("test", sample_rate=25600)
             assert task.device_product_type == ["NI 9234", "NI 9263"]
 
-    def test_logger_name(self, mock_system):
-        """Logger is named 'nidaqwrapper.task'."""
-        system = mock_system(task_names=[])
-        with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local", return_value=system),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-        ):
-            from nidaqwrapper.task_input import NITask
-
-            task = NITask("test", sample_rate=25600)
-            assert task._logger.name == "nidaqwrapper.task"
-
     def test_duplicate_task_name_raises_valueerror(self, mock_system):
         """Constructor raises ValueError when task_name already exists in NI MAX."""
         system = mock_system(task_names=["existing_task"])
@@ -1787,23 +1775,31 @@ class TestContextManager:
 
         assert cleared, "clear_task() must be called even when the body raises"
 
-    def test_context_manager_cleanup_exception_logged_not_propagated(
+    def test_context_manager_cleanup_exception_warns_not_propagated(
         self, mock_system
     ):
-        """A cleanup exception from clear_task() is logged, not raised.
+        """A cleanup exception from clear_task() emits a warning, not raised.
 
         If the with-block body completed normally and clear_task() itself
-        raises, that secondary exception must be swallowed (and ideally logged)
-        so it does not mask the original success or confuse callers.
+        raises, that secondary exception must be swallowed and a
+        warnings.warn() emitted so the user is notified without needing
+        logging configuration.
         """
+        import warnings
+
         task = _make_task(mock_system)
         mock_hw_task = MagicMock()
         task.task = mock_hw_task
         mock_hw_task.close.side_effect = RuntimeError("cleanup error")
 
         # The body raises nothing; the cleanup raises RuntimeError.
-        # __exit__ must not let the RuntimeError propagate.
-        task.__exit__(None, None, None)  # must not raise
+        # __exit__ must not let the RuntimeError propagate, but should warn.
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            task.__exit__(None, None, None)  # must not raise
+
+        assert len(w) >= 1
+        assert "cleanup error" in str(w[0].message)
 
 
 # ---------------------------------------------------------------------------

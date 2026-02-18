@@ -12,7 +12,7 @@ is ``False`` and construction raises ``RuntimeError``.
 
 from __future__ import annotations
 
-import logging
+import warnings
 from typing import Any
 
 import numpy as np
@@ -70,7 +70,6 @@ class NITask:
     ) -> None:
         _require_nidaqmx()
 
-        self._logger = logging.getLogger("nidaqwrapper.task")
         self.task_name = task_name
         self.sample_rate = sample_rate
 
@@ -267,8 +266,6 @@ class NITask:
             "custom_scale_name": "",
         }
 
-        self._logger.debug("Channel '%s' added to task '%s'.", channel_name, self.task_name)
-
     # -- Task lifecycle ------------------------------------------------------
 
     def initiate(self, start_task: bool = False) -> None:
@@ -320,8 +317,6 @@ class NITask:
         if start_task:
             self.task.start()
 
-        self._logger.debug("Task '%s' initiated.", self.task_name)
-
     def acquire_base(self) -> np.ndarray:
         """Read all available samples from the hardware buffer.
 
@@ -361,7 +356,6 @@ class NITask:
         if hasattr(self, "task") and self.task is not None:
             self.task.close()
             self.task = None
-            self._logger.debug("Task '%s' cleared.", self.task_name)
 
     def save(self, clear_task: bool = True) -> None:
         """Save the task to NI MAX.
@@ -384,7 +378,6 @@ class NITask:
             self.initiate(start_task=False)
 
         self.task.save(overwrite_existing_task=True)
-        self._logger.info("Task saved to NI MAX.")
 
         if clear_task:
             self.clear_task()
@@ -402,19 +395,15 @@ class NITask:
         """Exit the runtime context, releasing hardware resources.
 
         Calls :meth:`clear_task` unconditionally.  If ``clear_task`` raises,
-        the exception is logged at WARNING level and swallowed so it does not
+        a warning is emitted and the exception is swallowed so it does not
         mask any exception that propagated from the ``with`` block body.
 
         Returns ``None`` so body exceptions are never suppressed.
         """
         try:
             self.clear_task()
-        except Exception:
-            self._logger.warning(
-                "Exception during clear_task() in __exit__ for task '%s'.",
-                self.task_name,
-                exc_info=True,
-            )
+        except Exception as exc:
+            warnings.warn(str(exc), stacklevel=2)
 
     # -- Private helpers — channel wiring -----------------------------------
 
