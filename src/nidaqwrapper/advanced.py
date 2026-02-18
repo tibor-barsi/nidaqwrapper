@@ -591,8 +591,8 @@ class NIAdvanced:
         Accepts four types and resolves each:
 
         - ``str``           → :func:`get_task_by_name`
-        - :class:`NITask`   → ``ni_task.initiate(start_task=False)`` if needed
-        - :class:`NITaskOutput` → ``ni_task_out.initiate()`` if needed
+        - :class:`NITask`   → ``ni_task.start(start_task=False)``
+        - :class:`NITaskOutput` → ``ni_task_out.start(start_task=False)``
         - ``nidaqmx.task.Task`` → passed through unchanged
 
         Parameters
@@ -616,13 +616,11 @@ class NIAdvanced:
                 resolved.append(get_task_by_name(task))
 
             elif isinstance(task, NITask):
-                if task.task is None:
-                    task.initiate(start_task=False)
+                task.start(start_task=False)
                 resolved.append(task.task)
 
             elif isinstance(task, NITaskOutput):
-                if task.task is None:
-                    task.initiate()
+                task.start(start_task=False)
                 resolved.append(task.task)
 
             elif _NIDAQMX_AVAILABLE and isinstance(task, nidaqmx.task.Task):

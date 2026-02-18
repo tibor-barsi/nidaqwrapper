@@ -252,26 +252,28 @@ class TestConfigureWithNidaqmxTask:
 class TestConfigureWithNITask:
     """Task group 2.3 — configure() with NITask objects."""
 
-    def test_nitask_resolved_via_initiate(self, adv, advanced_module):
-        """2.3 NITask objects are resolved: initiate() called, underlying task extracted."""
+    def test_nitask_resolved_via_start(self, adv, advanced_module):
+        """2.3 NITask objects are resolved: start() called, underlying task extracted."""
         mock_ni_task = MagicMock(spec=advanced_module.NITask)
         underlying = _make_nidaqmx_task("ResolvedTask")
         mock_ni_task.task = underlying
 
         result = adv._resolve_tasks([mock_ni_task])
+        mock_ni_task.start.assert_called_once_with(start_task=False)
         assert result == [underlying]
 
 
 class TestConfigureWithNITaskOutput:
     """Task group 2.4 — configure() with NITaskOutput objects."""
 
-    def test_nitaskoutput_resolved_via_initiate(self, adv, advanced_module):
-        """2.4 NITaskOutput objects are resolved: initiate() called, underlying task extracted."""
+    def test_nitaskoutput_resolved_via_start(self, adv, advanced_module):
+        """2.4 NITaskOutput objects are resolved: start() called, underlying task extracted."""
         mock_ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
         underlying = _make_nidaqmx_task("OutputResolvedTask")
         mock_ni_task_out.task = underlying
 
         result = adv._resolve_tasks([mock_ni_task_out])
+        mock_ni_task_out.start.assert_called_once_with(start_task=False)
         assert result == [underlying]
 
 
@@ -373,51 +375,24 @@ class TestResolveTasks:
             result = adv._resolve_tasks(["SomeName"])
             assert result == [loaded]
 
-    def test_resolve_nitask_calls_initiate_if_no_task(self, adv, advanced_module):
-        """3.2 NITask without .task calls initiate() first."""
-        ni_task = MagicMock(spec=advanced_module.NITask)
-        ni_task.task = None
-        underlying = _make_nidaqmx_task()
-        # After initiate(), the task attribute should be set
-        def set_task(**kwargs):
-            ni_task.task = underlying
-        ni_task.initiate.side_effect = set_task
-
-        result = adv._resolve_tasks([ni_task])
-        ni_task.initiate.assert_called_once_with(start_task=False)
-        assert result == [underlying]
-
-    def test_resolve_nitask_skips_initiate_if_task_exists(self, adv, advanced_module):
-        """3.2 NITask with existing .task skips initiate()."""
+    def test_resolve_nitask_calls_start(self, adv, advanced_module):
+        """3.2 NITask always calls start(start_task=False) to configure timing."""
         ni_task = MagicMock(spec=advanced_module.NITask)
         underlying = _make_nidaqmx_task()
-        ni_task.task = underlying
+        ni_task.task = underlying  # task exists from direct-delegation __init__
 
         result = adv._resolve_tasks([ni_task])
-        ni_task.initiate.assert_not_called()
+        ni_task.start.assert_called_once_with(start_task=False)
         assert result == [underlying]
 
-    def test_resolve_nitaskoutput_calls_initiate_if_no_task(self, adv, advanced_module):
-        """3.3 NITaskOutput without .task calls initiate() first."""
-        ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
-        ni_task_out.task = None
-        underlying = _make_nidaqmx_task()
-        def set_task():
-            ni_task_out.task = underlying
-        ni_task_out.initiate.side_effect = set_task
-
-        result = adv._resolve_tasks([ni_task_out])
-        ni_task_out.initiate.assert_called_once()
-        assert result == [underlying]
-
-    def test_resolve_nitaskoutput_skips_initiate_if_task_exists(self, adv, advanced_module):
-        """3.3 NITaskOutput with existing .task skips initiate()."""
+    def test_resolve_nitaskoutput_calls_start(self, adv, advanced_module):
+        """3.3 NITaskOutput always calls start(start_task=False) to configure timing."""
         ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
         underlying = _make_nidaqmx_task()
-        ni_task_out.task = underlying
+        ni_task_out.task = underlying  # task exists from direct-delegation __init__
 
         result = adv._resolve_tasks([ni_task_out])
-        ni_task_out.initiate.assert_not_called()
+        ni_task_out.start.assert_called_once_with(start_task=False)
         assert result == [underlying]
 
     def test_resolve_nidaqmx_task_passthrough(self, adv, advanced_module):
