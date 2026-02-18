@@ -36,8 +36,8 @@ pytestmark = pytest.mark.hardware
 # Hardware constants — update if the rig changes
 # ---------------------------------------------------------------------------
 
-DEVICE_IND = 2          # cDAQ1Mod4 (NI 9215) in the device list
-DEVICE_NAME = "cDAQ1Mod4"
+DEVICE_IND = 2          # cDAQ2Mod4 (NI 9215) in the device list
+DEVICE_NAME = "cDAQ2Mod4"
 PRODUCT_SUBSTR = "9215"  # substring that must appear in the product type
 SAMPLE_RATE = 25600      # exact rate supported by NI 9215
 VOLTAGE_MIN = -10.0      # NI 9215 input range lower bound
