@@ -24,32 +24,25 @@ import pytest
 def _make_mock_ni_task(
     task_name="TestInput",
     sample_rate=25600.0,
-    channels=None,
-    settings_file=None,
 ):
-    """Create a mock NITask object that behaves like the real one."""
+    """Create a mock NITask object that behaves like the real one.
+
+    After the direct-delegation refactor, NITask objects are stored by
+    reference — no deep-copy of channels, no settings_file stored on
+    the wrapper.  The mock reflects that simplified surface area.
+    """
     task = MagicMock()
     task.task_name = task_name
     task.sample_rate = sample_rate
-    task.settings_file = settings_file
-    task.channels = channels or {
-        "ch0": {"device_ind": 0, "channel_ind": 0, "sensitivity": 100.0,
-                "sensitivity_units": "mV/g", "units": "g", "units_str": "g",
-                "serial_nr": None, "scale": None, "min_val": None,
-                "max_val": None, "custom_scale_name": ""},
-        "ch1": {"device_ind": 0, "channel_ind": 1, "sensitivity": 100.0,
-                "sensitivity_units": "mV/g", "units": "g", "units_str": "g",
-                "serial_nr": None, "scale": None, "min_val": None,
-                "max_val": None, "custom_scale_name": ""},
-    }
-    task.channel_list = list(task.channels.keys())
-    task.number_of_ch = len(task.channels)
+    task.channel_list = ["ch0", "ch1"]
+    task.number_of_ch = 2
     task.device_list = ["cDAQ1Mod1"]
+    task.start = MagicMock()
 
-    # Mock the underlying nidaqmx task (set after initiate)
+    # Mock the underlying nidaqmx task (set after start())
     inner_task = MagicMock()
-    inner_task.channel_names = list(task.channels.keys())
-    inner_task.number_of_channels = len(task.channels)
+    inner_task.channel_names = ["ch0", "ch1"]
+    inner_task.number_of_channels = 2
     inner_task.devices = [MagicMock(name="cDAQ1Mod1")]
     inner_task.devices[0].name = "cDAQ1Mod1"
     inner_task.timing = MagicMock()
@@ -62,22 +55,24 @@ def _make_mock_ni_task(
 def _make_mock_ni_task_output(
     task_name="TestOutput",
     sample_rate=10000.0,
-    channels=None,
 ):
-    """Create a mock NITaskOutput object."""
+    """Create a mock NITaskOutput object.
+
+    After the direct-delegation refactor, NITaskOutput objects are stored
+    by reference. Metadata is read via channel_list/number_of_ch properties
+    instead of a .channels dict.
+    """
     task = MagicMock()
     task.task_name = task_name
     task.sample_rate = sample_rate
-    task.channels = channels or {
-        "ao0": {"device_ind": 0, "channel_ind": 0, "min_val": -10.0, "max_val": 10.0},
-    }
-    task.channel_list = list(task.channels.keys())
-    task.number_of_channels = len(task.channels)
+    task.channel_list = ["ao0"]
+    task.number_of_ch = 1
     task.device_list = ["cDAQ1Mod2"]
+    task.start = MagicMock()
 
     inner_task = MagicMock()
-    inner_task.channel_names = list(task.channels.keys())
-    inner_task.number_of_channels = len(task.channels)
+    inner_task.channel_names = ["ao0"]
+    inner_task.number_of_channels = 1
     inner_task.devices = [MagicMock(name="cDAQ1Mod2")]
     inner_task.devices[0].name = "cDAQ1Mod2"
     inner_task.timing = MagicMock()
@@ -93,29 +88,34 @@ class _FakeDigitalInput:
     MagicMock() instances each get unique metaclasses, making
     ``isinstance(mock2, type(mock1))`` fail.  Using a concrete class
     ensures all instances share the same type.
+
+    After the direct-delegation refactor, connect() calls start() instead
+    of initiate() on digital task objects.
     """
 
     def __init__(self, task_name="di_test", sample_rate=None):
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode = "on_demand" if sample_rate is None else "clocked"
-        self.channels = {}
         self.task = None
-        self.initiate = MagicMock()
+        self.start = MagicMock()
         self.read = MagicMock(return_value=np.array([True, False]))
         self.clear_task = MagicMock()
 
 
 class _FakeDigitalOutput:
-    """Fake DigitalOutput for testing isinstance() checks."""
+    """Fake DigitalOutput for testing isinstance() checks.
+
+    After the direct-delegation refactor, connect() calls start() instead
+    of initiate() on digital task objects.
+    """
 
     def __init__(self, task_name="do_test", sample_rate=None):
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode = "on_demand" if sample_rate is None else "clocked"
-        self.channels = {}
         self.task = None
-        self.initiate = MagicMock()
+        self.start = MagicMock()
         self.write = MagicMock()
         self.clear_task = MagicMock()
 
@@ -336,6 +336,7 @@ class TestConfigureObjects:
         assert w._task_in_is_str is False
         assert w._task_in_name_str == "TestInput"
         assert w._task_in_sample_rate == 25600.0
+        # Direct-delegation: object is stored by reference, no deep copy
 
     def test_configure_ni_task_output_object(self, NIDAQWrapper, wrapper_module):
         """3.2 configure(task_out=NITaskOutput) stores output object."""
@@ -359,17 +360,43 @@ class TestConfigureObjects:
         assert w._task_in_is_obj is True
         assert w._task_out_is_str is True
 
-    def test_configure_deep_copies_channels(self, NIDAQWrapper, wrapper_module):
-        """3.4 configure() deep-copies channel config for reconnection."""
+    def test_configure_stores_reference_without_deep_copy(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """3.4 configure() stores the NITask reference directly (no deep copy)."""
         mock_task = _make_mock_ni_task()
 
         with patch.object(wrapper_module, "NITask", new=type(mock_task)):
             w = NIDAQWrapper()
             w.configure(task_in=mock_task)
 
-        # Should be a deep copy, not the same dict
-        assert w._task_in_channels is not mock_task.channels
-        assert w._task_in_channels == mock_task.channels
+        # Direct-delegation: stored object IS the same reference
+        assert w._task_in_obj is mock_task
+
+    def test_configure_no_deep_copy_attrs(self, NIDAQWrapper, wrapper_module):
+        """3.5 configure() does not create _task_in_channels or _task_in_settings_file."""
+        mock_task = _make_mock_ni_task()
+
+        with patch.object(wrapper_module, "NITask", new=type(mock_task)):
+            w = NIDAQWrapper()
+            w.configure(task_in=mock_task)
+
+        # These attributes were removed as part of the direct-delegation refactor
+        assert not hasattr(w, "_task_in_channels") or w._task_in_channels is None
+        assert (
+            not hasattr(w, "_task_in_settings_file")
+            or w._task_in_settings_file is None
+        )
+
+    def test_configure_no_deep_copy_output_attrs(self, NIDAQWrapper, wrapper_module):
+        """3.6 configure() does not create _task_out_channels for output tasks."""
+        mock_task_out = _make_mock_ni_task_output()
+
+        with patch.object(wrapper_module, "NITaskOutput", new=type(mock_task_out)):
+            w = NIDAQWrapper()
+            w.configure(task_out=mock_task_out)
+
+        assert not hasattr(w, "_task_out_channels") or w._task_out_channels is None
 
 
 # ===================================================================
@@ -411,28 +438,23 @@ class TestConnectDisconnect:
         assert w._sample_rate_in == 51200.0
         assert "cDAQ1Mod1" in w._required_devices
 
-    def test_connect_with_ni_task_object_calls_initiate(self, NIDAQWrapper, wrapper_module):
-        """4.2 connect() with NITask object calls initiate() exactly once.
+    def test_connect_with_ni_task_object_calls_start(self, NIDAQWrapper, wrapper_module):
+        """4.2 connect() with NITask object calls start() on the stored reference.
 
-        The wrapper calls initiate() without a start_task kwarg, relying
-        on NITask's default (start_task=False). We verify the call was made
-        but do NOT inspect kwargs — that is NITask's responsibility.
+        After the direct-delegation refactor, connect() calls start() directly
+        on the stored NITask object — no recreation, no constructor call.
         """
         mock_task = _make_mock_ni_task()
-        # The recreated task that connect() will build
-        recreated_task = _make_mock_ni_task()
 
         with patch.object(wrapper_module, "NITask", new=type(mock_task)):
             w = NIDAQWrapper()
             w.configure(task_in=mock_task)
 
-        # Patch NITask constructor so _recreate_ni_task_in returns our mock
-        with patch.object(wrapper_module, "NITask", return_value=recreated_task) as mock_cls, \
-             patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
+        with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
             w.connect()
 
-        # Verify initiate() was called exactly once — do NOT assert on start_task kwarg.
-        recreated_task.initiate.assert_called_once()
+        # start(start_task=False) must be called — Pitfall #5: wrapper must not auto-start
+        mock_task.start.assert_called_once_with(start_task=False)
 
     def test_connect_closes_previous_tasks(self, NIDAQWrapper, wrapper_module):
         """4.3 connect() closes previous tasks before opening new ones."""
@@ -473,31 +495,37 @@ class TestConnectDisconnect:
 
         assert result is False
 
-    def test_connect_ni_task_recreation_on_second_connect(self, NIDAQWrapper, wrapper_module):
-        """4.5 Second connect() recreates NITask from stored channel config."""
+    def test_connect_with_obj_calls_start_directly(self, NIDAQWrapper, wrapper_module):
+        """4.5 connect() calls start() directly on stored NITask — no recreation."""
         mock_task = _make_mock_ni_task()
-        recreated = _make_mock_ni_task()
-        mock_ni_task_class = MagicMock(return_value=recreated)
 
-        w = NIDAQWrapper()
-        # Manually set up as if configured with an NITask object
-        w._configured = True
-        w._task_in_is_obj = True
-        w._task_in_is_str = False
-        w._task_in_obj = mock_task
-        w._task_in_channels = {"ch0": mock_task.channels["ch0"], "ch1": mock_task.channels["ch1"]}
-        w._task_in_name_str = "TestInput"
-        w._task_in_sample_rate = 25600.0
-        w._task_in_settings_file = None
-        w._task_out_is_str = False
-        w._task_out_is_obj = False
+        with patch.object(wrapper_module, "NITask", new=type(mock_task)):
+            w = NIDAQWrapper()
+            w.configure(task_in=mock_task)
 
-        with patch.object(wrapper_module, "NITask", mock_ni_task_class) as mock_cls, \
-             patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
+        # No NITask constructor patch needed: recreation was removed
+        with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
             w.connect()
 
-        # NITask constructor should be called for re-creation
-        mock_cls.assert_called_once()
+        # The stored reference itself receives start(start_task=False), not a new instance
+        mock_task.start.assert_called_once_with(start_task=False)
+        assert w._task_in_obj is mock_task
+
+    def test_connect_with_ni_task_output_object_calls_start(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """4.x connect() calls start() on stored NITaskOutput object."""
+        mock_task_out = _make_mock_ni_task_output()
+
+        with patch.object(wrapper_module, "NITaskOutput", new=type(mock_task_out)):
+            w = NIDAQWrapper()
+            w.configure(task_out=mock_task_out)
+
+        with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod2"}):
+            w.connect()
+
+        # Pitfall #5: wrapper must not auto-start output tasks either
+        mock_task_out.start.assert_called_once_with(start_task=False)
 
     def test_disconnect_closes_input_task(self, NIDAQWrapper, wrapper_module):
         """4.6 disconnect() closes input task."""
@@ -1945,8 +1973,8 @@ class TestWriteDigital:
 class TestDigitalLifecycle:
     """Task group 24: Digital tasks in connect()/disconnect() lifecycle."""
 
-    def test_connect_initiates_digital_input(self, NIDAQWrapper, wrapper_module):
-        """7.1 connect() calls initiate() on configured DigitalInput task."""
+    def test_connect_starts_digital_input(self, NIDAQWrapper, wrapper_module):
+        """7.1 connect() calls start() on configured DigitalInput task."""
         mock_di = _make_mock_digital_input()
 
         with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
@@ -1956,11 +1984,12 @@ class TestDigitalLifecycle:
         with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
             w.connect()
 
-        mock_di.initiate.assert_called_once()
+        # Digital tasks: start() with no args (unlike analog's start_task=False)
+        mock_di.start.assert_called_once_with()
         assert w._task_digital_in is mock_di
 
-    def test_connect_initiates_digital_output(self, NIDAQWrapper, wrapper_module):
-        """7.2 connect() calls initiate() on configured DigitalOutput task."""
+    def test_connect_starts_digital_output(self, NIDAQWrapper, wrapper_module):
+        """7.2 connect() calls start() on configured DigitalOutput task."""
         mock_do = _make_mock_digital_output()
 
         with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
@@ -1970,11 +1999,12 @@ class TestDigitalLifecycle:
         with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
             w.connect()
 
-        mock_do.initiate.assert_called_once()
+        # Digital tasks: start() with no args
+        mock_do.start.assert_called_once_with()
         assert w._task_digital_out is mock_do
 
-    def test_connect_initiates_both_analog_and_digital(self, NIDAQWrapper, wrapper_module):
-        """7.3 connect() with both analog and digital tasks initiates all."""
+    def test_connect_starts_both_analog_and_digital(self, NIDAQWrapper, wrapper_module):
+        """7.3 connect() with both analog and digital tasks starts all."""
         mock_di = _make_mock_digital_input()
         mock_do = _make_mock_digital_output()
         mock_loaded_task = _make_mock_nidaqmx_task()
@@ -1993,8 +2023,8 @@ class TestDigitalLifecycle:
             result = w.connect()
 
         assert result is True
-        mock_di.initiate.assert_called_once()
-        mock_do.initiate.assert_called_once()
+        mock_di.start.assert_called_once_with()
+        mock_do.start.assert_called_once_with()
 
     def test_disconnect_clears_digital_input(self, NIDAQWrapper, wrapper_module):
         """7.4 disconnect() calls clear_task() on active DigitalInput task."""
@@ -2053,12 +2083,12 @@ class TestDigitalLifecycle:
 
         assert w._task_digital_in is mock_loaded
 
-    def test_connect_digital_initiate_failure_does_not_prevent_analog(
+    def test_connect_digital_start_failure_does_not_prevent_analog(
         self, NIDAQWrapper, wrapper_module
     ):
-        """7.8 Digital initiate() failure doesn't prevent analog connect()."""
+        """7.8 Digital start() failure doesn't prevent analog connect()."""
         mock_di = _make_mock_digital_input()
-        mock_di.initiate.side_effect = RuntimeError("digital init failed")
+        mock_di.start.side_effect = RuntimeError("digital start failed")
         mock_loaded_task = _make_mock_nidaqmx_task()
 
         with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
@@ -2072,7 +2102,7 @@ class TestDigitalLifecycle:
         # Analog succeeds despite digital failure
         assert result is True
         assert w._task_in is not None
-        # Digital was NOT set (initiate failed)
+        # Digital was NOT set (start failed)
         assert w._task_digital_in is None
 
     def test_disconnect_digital_failure_does_not_prevent_analog_cleanup(
@@ -2159,3 +2189,63 @@ class TestDigitalContextManager:
 
         mock_do.clear_task.assert_called_once()
         assert w._task_digital_out is None
+
+
+# ===================================================================
+# 26. Direct-Delegation Guard Tests
+# ===================================================================
+
+class TestDirectDelegationGuards:
+    """Guard tests: removed attributes and methods must not exist on NIDAQWrapper.
+
+    These tests ensure that the pre-refactor recreation helpers are gone
+    and that no dead code re-appears during future edits.
+    """
+
+    def test_no_recreate_ni_task_in_method(self, NIDAQWrapper):
+        """_recreate_ni_task_in() was removed in the direct-delegation refactor."""
+        w = NIDAQWrapper()
+        assert not hasattr(w, "_recreate_ni_task_in")
+
+    def test_no_recreate_ni_task_out_method(self, NIDAQWrapper):
+        """_recreate_ni_task_out() was removed in the direct-delegation refactor."""
+        w = NIDAQWrapper()
+        assert not hasattr(w, "_recreate_ni_task_out")
+
+
+# ===================================================================
+# 27. Output Metadata via channel_list / number_of_ch
+# ===================================================================
+
+class TestOutputMetadataDelegation:
+    """_extract_output_metadata_from_ni_task_out() uses channel_list and
+    number_of_ch properties — NOT the removed .channels dict.
+    """
+
+    def test_extract_output_metadata_uses_channel_list(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """connect() populates _channel_names_out and _n_channels_out via
+        channel_list/number_of_ch on the stored NITaskOutput reference.
+        """
+        mock_task_out = _make_mock_ni_task_output()
+        mock_task_out.channel_list = ["ao0", "ao1"]
+        mock_task_out.number_of_ch = 2
+        mock_task_out.sample_rate = 10000.0
+
+        # Poison .channels so any access raises — ensures implementation
+        # uses channel_list/number_of_ch, not the removed .channels dict
+        type(mock_task_out).channels = PropertyMock(
+            side_effect=AttributeError("channels dict was removed")
+        )
+
+        with patch.object(wrapper_module, "NITaskOutput", new=type(mock_task_out)):
+            w = NIDAQWrapper()
+            w.configure(task_out=mock_task_out)
+
+        with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod2"}):
+            w.connect()
+
+        assert w._channel_names_out == ["ao0", "ao1"]
+        assert w._n_channels_out == 2
+        assert w._sample_rate_out == 10000.0

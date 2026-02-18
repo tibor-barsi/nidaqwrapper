@@ -29,7 +29,6 @@ Framework integration (LDAQ / OpenEOL)::
 
 from __future__ import annotations
 
-import copy
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -111,13 +110,10 @@ class NIDAQWrapper:
         # Stored configuration for reconnection
         self._task_in_name: str | None = None
         self._task_in_obj: NITask | None = None
-        self._task_in_channels: dict | None = None
         self._task_in_name_str: str | None = None
         self._task_in_sample_rate: float | None = None
-        self._task_in_settings_file: str | None = None
         self._task_out_name: str | None = None
         self._task_out_obj: NITaskOutput | None = None
-        self._task_out_channels: dict | None = None
         self._task_out_name_str: str | None = None
         self._task_out_sample_rate: float | None = None
 
@@ -214,10 +210,8 @@ class NIDAQWrapper:
         self._task_in_is_obj = False
         self._task_in_name = None
         self._task_in_obj = None
-        self._task_in_channels = None
         self._task_in_name_str = None
         self._task_in_sample_rate = None
-        self._task_in_settings_file = None
 
         if isinstance(task_in, str):
             self._task_in_is_str = True
@@ -225,10 +219,8 @@ class NIDAQWrapper:
         elif isinstance(task_in, NITask):
             self._task_in_is_obj = True
             self._task_in_obj = task_in
-            self._task_in_channels = copy.deepcopy(task_in.channels)
             self._task_in_name_str = task_in.task_name
             self._task_in_sample_rate = task_in.sample_rate
-            self._task_in_settings_file = getattr(task_in, "settings_file", None)
         elif task_in is not None:
             raise TypeError(
                 f"task_in must be a string or NITask, got {type(task_in).__name__}"
@@ -239,7 +231,6 @@ class NIDAQWrapper:
         self._task_out_is_obj = False
         self._task_out_name = None
         self._task_out_obj = None
-        self._task_out_channels = None
         self._task_out_name_str = None
         self._task_out_sample_rate = None
 
@@ -249,7 +240,6 @@ class NIDAQWrapper:
         elif isinstance(task_out, NITaskOutput):
             self._task_out_is_obj = True
             self._task_out_obj = task_out
-            self._task_out_channels = copy.deepcopy(task_out.channels)
             self._task_out_name_str = task_out.task_name
             self._task_out_sample_rate = task_out.sample_rate
         elif task_out is not None:
@@ -321,7 +311,7 @@ class NIDAQWrapper:
 
         For NI MAX name strings, loads the saved task via
         :func:`get_task_by_name`.  For :class:`NITask` objects, calls
-        ``initiate()`` to create the underlying hardware task.
+        ``start()`` to create the underlying hardware task.
 
         Returns
         -------
@@ -347,8 +337,8 @@ class NIDAQWrapper:
                     self._extract_input_metadata_from_nidaqmx(loaded)
 
                 elif self._task_in_is_obj:
-                    ni_task = self._recreate_ni_task_in()
-                    ni_task.initiate()
+                    ni_task = self._task_in_obj
+                    ni_task.start(start_task=False)
                     self._task_in = ni_task.task
                     self._task_in_obj_active = ni_task
                     self._extract_input_metadata_from_ni_task(ni_task)
@@ -363,8 +353,8 @@ class NIDAQWrapper:
                     self._extract_output_metadata_from_nidaqmx(loaded)
 
                 elif self._task_out_is_obj:
-                    ni_task_out = self._recreate_ni_task_out()
-                    ni_task_out.initiate()
+                    ni_task_out = self._task_out_obj
+                    ni_task_out.start(start_task=False)
                     self._task_out = ni_task_out.task
                     self._task_out_obj_active = ni_task_out
                     self._extract_output_metadata_from_ni_task_out(ni_task_out)
@@ -378,7 +368,7 @@ class NIDAQWrapper:
 
                 elif self._task_digital_in_is_obj:
                     try:
-                        self._task_digital_in_obj.initiate()
+                        self._task_digital_in_obj.start()
                         self._task_digital_in = self._task_digital_in_obj
                     except Exception as exc:
                         warnings.warn(str(exc), stacklevel=2)
@@ -392,7 +382,7 @@ class NIDAQWrapper:
 
                 elif self._task_digital_out_is_obj:
                     try:
-                        self._task_digital_out_obj.initiate()
+                        self._task_digital_out_obj.start()
                         self._task_digital_out = self._task_digital_out_obj
                     except Exception as exc:
                         warnings.warn(str(exc), stacklevel=2)
@@ -1111,45 +1101,6 @@ class NIDAQWrapper:
                 warnings.warn(str(exc), stacklevel=2)
             self._task_digital_out = None
 
-    def _recreate_ni_task_in(self) -> NITask:
-        """Recreate an NITask from stored channel configuration.
-
-        Used on reconnection to get a fresh hardware task from the
-        stored channel config (deep-copy pattern from LDAQ).
-        """
-        if self._task_in_channels is not None:
-            new_task = NITask(
-                self._task_in_name_str,
-                self._task_in_sample_rate,
-                self._task_in_settings_file,
-            )
-            for ch_name, ch_cfg in self._task_in_channels.items():
-                new_task.add_channel(
-                    ch_name,
-                    ch_cfg["device_ind"],
-                    ch_cfg["channel_ind"],
-                    ch_cfg["sensitivity"],
-                    ch_cfg.get("sensitivity_units"),
-                    ch_cfg.get("units_str") or ch_cfg.get("units"),
-                    ch_cfg.get("serial_nr"),
-                    ch_cfg.get("scale"),
-                    ch_cfg.get("min_val"),
-                    ch_cfg.get("max_val"),
-                )
-            return new_task
-        return self._task_in_obj
-
-    def _recreate_ni_task_out(self) -> NITaskOutput:
-        """Recreate an NITaskOutput from stored channel configuration."""
-        if self._task_out_channels is not None:
-            new_task = NITaskOutput(
-                self._task_out_name_str,
-                self._task_out_sample_rate,
-            )
-            new_task.channels = copy.deepcopy(self._task_out_channels)
-            return new_task
-        return self._task_out_obj
-
     def _extract_input_metadata_from_nidaqmx(self, task: Any) -> None:
         """Extract metadata from a loaded nidaqmx.Task (NI MAX)."""
         self._channel_names_in = list(task.channel_names)
@@ -1172,6 +1123,6 @@ class NIDAQWrapper:
         self, ni_task_out: NITaskOutput
     ) -> None:
         """Extract metadata from a programmatic NITaskOutput object."""
-        self._channel_names_out = list(ni_task_out.channels.keys())
-        self._n_channels_out = len(ni_task_out.channels)
+        self._channel_names_out = ni_task_out.channel_list
+        self._n_channels_out = ni_task_out.number_of_ch
         self._sample_rate_out = ni_task_out.sample_rate
