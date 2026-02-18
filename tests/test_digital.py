@@ -105,15 +105,6 @@ class TestDigitalInputConstructor:
             assert "cDAQ1Mod1" in di.device_list
             assert "cDAQ1Mod2" in di.device_list
 
-    def test_logger_name(self):
-        """DigitalInput logger is named 'nidaqwrapper.digital'."""
-        mock_nidaqmx, _ = _make_mock_nidaqmx()
-        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
-            from nidaqwrapper.digital import DigitalInput
-
-            di = DigitalInput(task_name="di_log")
-            assert di.logger.name == "nidaqwrapper.digital"
-
     def test_reject_duplicate_task_name(self):
         """DigitalInput raises ValueError if task_name already exists in NI MAX."""
         mock_nidaqmx, _ = _make_mock_nidaqmx(task_names=["existing_task"])
@@ -451,6 +442,26 @@ class TestDigitalInputClearTask:
 
             di = DigitalInput(task_name="di_noinit")
             di.clear_task()  # Should not raise
+
+    def test_clear_task_exception_warns_not_propagated(self):
+        """clear_task() emits a warning if close() raises, does not propagate."""
+        import warnings
+
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalInput
+
+            di = DigitalInput(task_name="di_warn")
+            di.add_channel("ch", lines="Dev1/port0/line0")
+            di.initiate()
+            mock_task.close.side_effect = OSError("hw error")
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                di.clear_task()  # must not raise
+
+            assert len(w) >= 1
+            assert "hw error" in str(w[0].message)
 
     def test_context_manager_enter_returns_self(self):
         """__enter__ returns the DigitalInput instance."""
@@ -839,6 +850,26 @@ class TestDigitalOutputClearTask:
 
             do = DigitalOutput(task_name="do_noinit")
             do.clear_task()  # Should not raise
+
+    def test_clear_task_exception_warns_not_propagated(self):
+        """clear_task() emits a warning if close() raises, does not propagate."""
+        import warnings
+
+        mock_nidaqmx, mock_task = _make_mock_nidaqmx()
+        with patch.dict("sys.modules", {"nidaqmx": mock_nidaqmx, "nidaqmx.constants": mock_nidaqmx.constants, "nidaqmx.system": mock_nidaqmx.system}):
+            from nidaqwrapper.digital import DigitalOutput
+
+            do = DigitalOutput(task_name="do_warn")
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.initiate()
+            mock_task.close.side_effect = OSError("hw error")
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                do.clear_task()  # must not raise
+
+            assert len(w) >= 1
+            assert "hw error" in str(w[0].message)
 
     def test_context_manager_enter_returns_self(self):
         """__enter__ returns the DigitalOutput instance."""

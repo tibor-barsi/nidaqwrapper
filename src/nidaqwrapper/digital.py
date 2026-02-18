@@ -13,12 +13,10 @@ follows the patterns from NITask and NITaskOutput for consistency.
 
 from __future__ import annotations
 
-import logging
+import warnings
 from typing import Any
 
 import numpy as np
-
-logger = logging.getLogger("nidaqwrapper.digital")
 
 try:
     import nidaqmx
@@ -64,9 +62,7 @@ def _expand_port_to_line_range(lines: str) -> str:
         return lines  # No expansion possible, let nidaqmx handle the error
 
     n_lines = len(port_lines)
-    expanded = f"{lines}/line0:{n_lines - 1}"
-    logger.debug("Expanded port spec '%s' → '%s'", lines, expanded)
-    return expanded
+    return f"{lines}/line0:{n_lines - 1}"
 
 
 class DigitalInput:
@@ -106,7 +102,6 @@ class DigitalInput:
     """
 
     def __init__(self, task_name: str, sample_rate: float | None = None) -> None:
-        self.logger = logging.getLogger("nidaqwrapper.digital")
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode: str = "on_demand" if sample_rate is None else "clocked"
@@ -124,13 +119,6 @@ class DigitalInput:
                 f"Task name '{task_name}' already exists in NI MAX. "
                 "Choose a unique name."
             )
-
-        self.logger.debug(
-            "DigitalInput '%s' created (mode=%s, sample_rate=%s)",
-            task_name,
-            self.mode,
-            sample_rate,
-        )
 
     def add_channel(self, channel_name: str, lines: str) -> None:
         """Add a digital input channel by line specification.
@@ -163,9 +151,6 @@ class DigitalInput:
                 )
 
         self.channels[channel_name] = {"lines": lines}
-        self.logger.debug(
-            "Channel '%s' added with lines='%s'", channel_name, lines
-        )
 
     def initiate(self, start_task: bool = True) -> None:
         """Create the underlying nidaqmx task and configure channels/timing.
@@ -194,10 +179,6 @@ class DigitalInput:
             )
             if start_task:
                 self.task.start()
-
-        self.logger.debug(
-            "DigitalInput '%s' initiated (mode=%s)", self.task_name, self.mode
-        )
 
     def read(self) -> np.ndarray:
         """Read a single sample from all digital input lines (on-demand).
@@ -256,13 +237,9 @@ class DigitalInput:
         if self.task is not None:
             try:
                 self.task.close()
-            except Exception:
-                self.logger.warning(
-                    "Exception during clear_task() for '%s'", self.task_name,
-                    exc_info=True,
-                )
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self.task = None
-            self.logger.debug("DigitalInput '%s' task cleared", self.task_name)
 
     def __enter__(self) -> DigitalInput:
         return self
@@ -308,7 +285,6 @@ class DigitalOutput:
     """
 
     def __init__(self, task_name: str, sample_rate: float | None = None) -> None:
-        self.logger = logging.getLogger("nidaqwrapper.digital")
         self.task_name = task_name
         self.sample_rate = sample_rate
         self.mode: str = "on_demand" if sample_rate is None else "clocked"
@@ -324,13 +300,6 @@ class DigitalOutput:
                 f"Task name '{task_name}' already exists in NI MAX. "
                 "Choose a unique name."
             )
-
-        self.logger.debug(
-            "DigitalOutput '%s' created (mode=%s, sample_rate=%s)",
-            task_name,
-            self.mode,
-            sample_rate,
-        )
 
     def add_channel(self, channel_name: str, lines: str) -> None:
         """Add a digital output channel by line specification.
@@ -363,9 +332,6 @@ class DigitalOutput:
                 )
 
         self.channels[channel_name] = {"lines": lines}
-        self.logger.debug(
-            "Channel '%s' added with lines='%s'", channel_name, lines
-        )
 
     def initiate(self, start_task: bool = True) -> None:
         """Create the underlying nidaqmx task and configure channels/timing.
@@ -395,10 +361,6 @@ class DigitalOutput:
             if start_task:
                 self.task.start()
 
-        self.logger.debug(
-            "DigitalOutput '%s' initiated (mode=%s)", self.task_name, self.mode
-        )
-
     def write(self, data: bool | int | list | np.ndarray) -> None:
         """Write a single sample to digital output lines (on-demand).
 
@@ -415,7 +377,6 @@ class DigitalOutput:
         elif isinstance(data, int) and not isinstance(data, bool):
             data = bool(data)
         self.task.write(data)
-        self.logger.debug("DigitalOutput '%s' write complete", self.task_name)
 
     def write_continuous(self, data: np.ndarray) -> None:
         """Write buffered data to digital output lines (clocked mode).
@@ -447,9 +408,6 @@ class DigitalOutput:
             write_data = [bool(v) for v in data]
 
         self.task.write(write_data, auto_start=True)
-        self.logger.debug(
-            "DigitalOutput '%s' write_continuous complete", self.task_name
-        )
 
     def clear_task(self) -> None:
         """Close the underlying nidaqmx task and release hardware resources.
@@ -459,15 +417,9 @@ class DigitalOutput:
         if self.task is not None:
             try:
                 self.task.close()
-            except Exception:
-                self.logger.warning(
-                    "Exception during clear_task() for '%s'", self.task_name,
-                    exc_info=True,
-                )
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self.task = None
-            self.logger.debug(
-                "DigitalOutput '%s' task cleared", self.task_name
-            )
 
     def __enter__(self) -> DigitalOutput:
         return self
