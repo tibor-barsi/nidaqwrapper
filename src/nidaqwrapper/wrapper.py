@@ -30,11 +30,12 @@ Framework integration (LDAQ / OpenEOL)::
 from __future__ import annotations
 
 import copy
-import logging
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Union
+
+import warnings
 
 import numpy as np
 
@@ -42,8 +43,6 @@ from .digital import DigitalInput, DigitalOutput
 from .task_input import NITask
 from .task_output import NITaskOutput
 from .utils import get_connected_devices, get_task_by_name
-
-logger = logging.getLogger("nidaqwrapper.wrapper")
 
 try:
     import nidaqmx
@@ -312,11 +311,6 @@ class NIDAQWrapper:
             )
 
         self._configured = True
-        logger.debug(
-            "Configured: task_in=%s, task_out=%s, "
-            "task_digital_in=%s, task_digital_out=%s",
-            task_in, task_out, task_digital_in, task_digital_out,
-        )
 
     # ------------------------------------------------------------------
     # Lifecycle: connect / disconnect
@@ -347,7 +341,6 @@ class NIDAQWrapper:
                 if self._task_in_is_str:
                     loaded = get_task_by_name(self._task_in_name)
                     if loaded is None:
-                        logger.error("Failed to load input task '%s'.", self._task_in_name)
                         self._connected = False
                         return False
                     self._task_in = loaded
@@ -364,7 +357,6 @@ class NIDAQWrapper:
                 if self._task_out_is_str:
                     loaded = get_task_by_name(self._task_out_name)
                     if loaded is None:
-                        logger.error("Failed to load output task '%s'.", self._task_out_name)
                         self._connected = False
                         return False
                     self._task_out = loaded
@@ -383,21 +375,13 @@ class NIDAQWrapper:
                     loaded = get_task_by_name(self._task_digital_in_name)
                     if loaded is not None:
                         self._task_digital_in = loaded
-                    else:
-                        logger.error(
-                            "Failed to load digital input task '%s'.",
-                            self._task_digital_in_name,
-                        )
 
                 elif self._task_digital_in_is_obj:
                     try:
                         self._task_digital_in_obj.initiate()
                         self._task_digital_in = self._task_digital_in_obj
-                    except Exception:
-                        logger.warning(
-                            "Digital input task initiation failed.",
-                            exc_info=True,
-                        )
+                    except Exception as exc:
+                        warnings.warn(str(exc), stacklevel=2)
 
                 # -- Digital output task --------------------------------
                 self._close_digital_out()
@@ -405,21 +389,13 @@ class NIDAQWrapper:
                     loaded = get_task_by_name(self._task_digital_out_name)
                     if loaded is not None:
                         self._task_digital_out = loaded
-                    else:
-                        logger.error(
-                            "Failed to load digital output task '%s'.",
-                            self._task_digital_out_name,
-                        )
 
                 elif self._task_digital_out_is_obj:
                     try:
                         self._task_digital_out_obj.initiate()
                         self._task_digital_out = self._task_digital_out_obj
-                    except Exception:
-                        logger.warning(
-                            "Digital output task initiation failed.",
-                            exc_info=True,
-                        )
+                    except Exception as exc:
+                        warnings.warn(str(exc), stacklevel=2)
 
                 # Build required devices set
                 self._required_devices = set()
@@ -434,7 +410,6 @@ class NIDAQWrapper:
                 if self.ping():
                     self._connected = True
                     self._state = "connected"
-                    logger.info("Connected successfully.")
                     return True
                 else:
                     # Digital-only configs have no required_devices
@@ -450,14 +425,12 @@ class NIDAQWrapper:
                     if has_digital and not has_analog:
                         self._connected = True
                         self._state = "connected"
-                        logger.info("Connected (digital tasks only).")
                         return True
                     self._connected = False
-                    logger.warning("Connected but ping failed.")
                     return False
 
-            except Exception:
-                logger.exception("Connection failed.")
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
                 self._connected = False
                 return False
 
@@ -476,8 +449,8 @@ class NIDAQWrapper:
             if self._generation_running:
                 try:
                     self._stop_generation_impl()
-                except Exception:
-                    logger.warning("Exception during generation stop in disconnect.", exc_info=True)
+                except Exception as exc:
+                    warnings.warn(str(exc), stacklevel=2)
 
             self._close_task_in()
             self._close_task_out()
@@ -485,7 +458,6 @@ class NIDAQWrapper:
             self._close_digital_out()
             self._connected = False
             self._state = "disconnected"
-            logger.debug("Disconnected.")
             return True
 
     # ------------------------------------------------------------------
@@ -535,10 +507,6 @@ class NIDAQWrapper:
             presamples=presamples,
         )
         self._trigger_is_set = True
-        logger.debug(
-            "Trigger set: n_samples=%d, channel=%d, level=%s, type=%s",
-            n_samples, trigger_channel, trigger_level, trigger_type,
-        )
 
     # ------------------------------------------------------------------
     # Acquisition
@@ -840,7 +808,6 @@ class NIDAQWrapper:
             self._task_out.out_stream.output_buf_size = data.shape[0]
             self._task_out.write(write_data, auto_start=True)
             self._generation_running = True
-            logger.debug("Generation started (shape=%s).", data.shape)
 
     def write(
         self,
@@ -912,7 +879,6 @@ class NIDAQWrapper:
                 # (-200018) when the 2-sample buffer drains before stop().
                 # This is benign for single-sample DC output.
                 pass
-            logger.debug("Single-sample write completed.")
 
     def stop_generation(self) -> None:
         """Stop signal generation and write zeros to all output channels.
@@ -955,7 +921,6 @@ class NIDAQWrapper:
             connected = get_connected_devices()
             for device in self._required_devices:
                 if device not in connected:
-                    logger.warning("Device '%s' is not connected.", device)
                     return False
             return True
 
@@ -971,7 +936,6 @@ class NIDAQWrapper:
         with self._lock:
             if not self._connected:
                 if self._connect_called:
-                    logger.info("Connection was lost, trying to reconnect...")
                     if self.connect():
                         self._state = "reconnected"
                         return "reconnected"
@@ -986,7 +950,6 @@ class NIDAQWrapper:
                 return "connected"
 
             # Ping failed — attempt reconnect
-            logger.warning("Connection to device lost. Attempting reconnect...")
             if self.connect():
                 self._state = "reconnected"
                 return "reconnected"
@@ -1103,15 +1066,15 @@ class NIDAQWrapper:
         if self._task_in is not None:
             try:
                 self._task_in.close()
-            except Exception:
-                logger.warning("Exception closing input task.", exc_info=True)
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_in = None
 
         if self._task_in_obj_active is not None:
             try:
                 self._task_in_obj_active.clear_task()
-            except Exception:
-                logger.warning("Exception clearing NITask.", exc_info=True)
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_in_obj_active = None
 
     def _close_task_out(self) -> None:
@@ -1119,15 +1082,15 @@ class NIDAQWrapper:
         if self._task_out is not None:
             try:
                 self._task_out.close()
-            except Exception:
-                logger.warning("Exception closing output task.", exc_info=True)
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_out = None
 
         if self._task_out_obj_active is not None:
             try:
                 self._task_out_obj_active.clear_task()
-            except Exception:
-                logger.warning("Exception clearing NITaskOutput.", exc_info=True)
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_out_obj_active = None
 
     def _close_digital_in(self) -> None:
@@ -1135,10 +1098,8 @@ class NIDAQWrapper:
         if self._task_digital_in is not None:
             try:
                 self._task_digital_in.clear_task()
-            except Exception:
-                logger.warning(
-                    "Exception clearing digital input task.", exc_info=True
-                )
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_digital_in = None
 
     def _close_digital_out(self) -> None:
@@ -1146,10 +1107,8 @@ class NIDAQWrapper:
         if self._task_digital_out is not None:
             try:
                 self._task_digital_out.clear_task()
-            except Exception:
-                logger.warning(
-                    "Exception clearing digital output task.", exc_info=True
-                )
+            except Exception as exc:
+                warnings.warn(str(exc), stacklevel=2)
             self._task_digital_out = None
 
     def _recreate_ni_task_in(self) -> NITask:
