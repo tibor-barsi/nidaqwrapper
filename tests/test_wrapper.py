@@ -87,6 +87,49 @@ def _make_mock_ni_task_output(
     return task
 
 
+class _FakeDigitalInput:
+    """Fake DigitalInput for testing isinstance() checks.
+
+    MagicMock() instances each get unique metaclasses, making
+    ``isinstance(mock2, type(mock1))`` fail.  Using a concrete class
+    ensures all instances share the same type.
+    """
+
+    def __init__(self, task_name="di_test", sample_rate=None):
+        self.task_name = task_name
+        self.sample_rate = sample_rate
+        self.mode = "on_demand" if sample_rate is None else "clocked"
+        self.channels = {}
+        self.task = None
+        self.initiate = MagicMock()
+        self.read = MagicMock(return_value=np.array([True, False]))
+        self.clear_task = MagicMock()
+
+
+class _FakeDigitalOutput:
+    """Fake DigitalOutput for testing isinstance() checks."""
+
+    def __init__(self, task_name="do_test", sample_rate=None):
+        self.task_name = task_name
+        self.sample_rate = sample_rate
+        self.mode = "on_demand" if sample_rate is None else "clocked"
+        self.channels = {}
+        self.task = None
+        self.initiate = MagicMock()
+        self.write = MagicMock()
+        self.clear_task = MagicMock()
+
+
+def _make_mock_digital_input(task_name="di_test", sample_rate=None):
+    """Create a fake DigitalInput object."""
+    return _FakeDigitalInput(task_name=task_name, sample_rate=sample_rate)
+
+
+def _make_mock_digital_output(task_name="do_test", sample_rate=None):
+    """Create a fake DigitalOutput object."""
+    return _FakeDigitalOutput(task_name=task_name, sample_rate=sample_rate)
+
+
 def _make_mock_nidaqmx_task(channel_names=None, sample_rate=25600.0, device_names=None):
     """Create a mock nidaqmx.task.Task (loaded from NI MAX)."""
     task = MagicMock()
@@ -1618,7 +1661,7 @@ class TestTimingParameters:
     def test_timing_via_configure(self, NIDAQWrapper):
         """20.2 Custom timing via configure()."""
         w = NIDAQWrapper()
-        w.configure(acquisition_sleep=0.002, post_trigger_delay=0.2)
+        w.configure(task_in="TestTask", acquisition_sleep=0.002, post_trigger_delay=0.2)
         assert w.acquisition_sleep == 0.002
         assert w.post_trigger_delay == 0.2
 
@@ -1627,3 +1670,492 @@ class TestTimingParameters:
         w = NIDAQWrapper(acquisition_sleep=0.003, post_trigger_delay=0.15)
         assert w.acquisition_sleep == 0.003
         assert w.post_trigger_delay == 0.15
+
+
+# ===================================================================
+# 21. configure() with Digital Task Parameters (FR-6.10a)
+# ===================================================================
+
+class TestConfigureDigital:
+    """Task group 21: configure() with digital task parameters."""
+
+    def test_configure_digital_input_object(self, NIDAQWrapper, wrapper_module):
+        """1.1 configure(task_digital_in=DigitalInput(...)) stores the object."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        assert w._task_digital_in_obj is mock_di
+        assert w._task_digital_in_is_obj is True
+        assert w._task_digital_in_is_str is False
+        assert w._configured is True
+
+    def test_configure_digital_output_object(self, NIDAQWrapper, wrapper_module):
+        """1.2 configure(task_digital_out=DigitalOutput(...)) stores the object."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        assert w._task_digital_out_obj is mock_do
+        assert w._task_digital_out_is_obj is True
+        assert w._task_digital_out_is_str is False
+        assert w._configured is True
+
+    def test_configure_digital_input_string(self, NIDAQWrapper):
+        """1.3 configure(task_digital_in=string) stores the name."""
+        w = NIDAQWrapper()
+        w.configure(task_digital_in="MyDITask")
+
+        assert w._task_digital_in_name == "MyDITask"
+        assert w._task_digital_in_is_str is True
+        assert w._task_digital_in_is_obj is False
+        assert w._configured is True
+
+    def test_configure_digital_output_string(self, NIDAQWrapper):
+        """1.4 configure(task_digital_out=string) stores the name."""
+        w = NIDAQWrapper()
+        w.configure(task_digital_out="MyDOTask")
+
+        assert w._task_digital_out_name == "MyDOTask"
+        assert w._task_digital_out_is_str is True
+        assert w._task_digital_out_is_obj is False
+        assert w._configured is True
+
+    def test_configure_mixed_analog_and_digital(self, NIDAQWrapper, wrapper_module):
+        """1.5 configure() with analog + both digital stores all independently."""
+        mock_di = _make_mock_digital_input()
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput), \
+             patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(
+                task_in="AnalogIn",
+                task_out="AnalogOut",
+                task_digital_in=mock_di,
+                task_digital_out=mock_do,
+            )
+
+        assert w._task_in_name == "AnalogIn"
+        assert w._task_in_is_str is True
+        assert w._task_out_name == "AnalogOut"
+        assert w._task_out_is_str is True
+        assert w._task_digital_in_obj is mock_di
+        assert w._task_digital_in_is_obj is True
+        assert w._task_digital_out_obj is mock_do
+        assert w._task_digital_out_is_obj is True
+
+    def test_configure_digital_only_no_analog(self, NIDAQWrapper, wrapper_module):
+        """1.6 configure() with only digital task — succeeds, analog methods raise."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        assert w._configured is True
+        # Analog-specific methods should raise
+        with pytest.raises(ValueError, match="input task"):
+            w.set_trigger(n_samples=100, trigger_channel=0, trigger_level=0.5)
+        with pytest.raises(ValueError, match="input task"):
+            w.acquire()
+        with pytest.raises(ValueError, match="output task"):
+            w.generate(np.array([1.0]))
+
+    def test_configure_replaces_previous_digital(self, NIDAQWrapper, wrapper_module):
+        """1.7 Calling configure() with different digital tasks replaces previous."""
+        mock_di1 = _make_mock_digital_input(task_name="di_first")
+        mock_di2 = _make_mock_digital_input(task_name="di_second")
+        mock_do1 = _make_mock_digital_output(task_name="do_first")
+        mock_do2 = _make_mock_digital_output(task_name="do_second")
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput), \
+             patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di1, task_digital_out=mock_do1)
+            assert w._task_digital_in_obj is mock_di1
+            assert w._task_digital_out_obj is mock_do1
+            w.configure(task_digital_in=mock_di2, task_digital_out=mock_do2)
+            assert w._task_digital_in_obj is mock_di2
+            assert w._task_digital_out_obj is mock_do2
+
+    def test_configure_digital_invalid_type_raises(self, NIDAQWrapper):
+        """1.x configure() with invalid type for digital param raises TypeError."""
+        w = NIDAQWrapper()
+        with pytest.raises(TypeError, match="task_digital_in"):
+            w.configure(task_digital_in=42)
+        with pytest.raises(TypeError, match="task_digital_out"):
+            w.configure(task_digital_out=42)
+
+    def test_configure_no_tasks_raises(self, NIDAQWrapper):
+        """1.x configure() with no tasks at all raises ValueError."""
+        w = NIDAQWrapper()
+        with pytest.raises(ValueError, match="[Aa]t least one"):
+            w.configure()
+
+
+# ===================================================================
+# 22. read_digital() Method (FR-6.10b)
+# ===================================================================
+
+class TestReadDigital:
+    """Task group 22: read_digital() method."""
+
+    def test_read_digital_delegates_to_digital_input(self, NIDAQWrapper, wrapper_module):
+        """3.1 read_digital() delegates to DigitalInput.read() and returns result."""
+        mock_di = _make_mock_digital_input()
+        expected = np.array([True, False, True])
+        mock_di.read.return_value = expected
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        # Simulate connected state
+        w._task_digital_in = mock_di
+
+        result = w.read_digital()
+        mock_di.read.assert_called_once()
+        np.testing.assert_array_equal(result, expected)
+
+    def test_read_digital_no_task_raises(self, NIDAQWrapper):
+        """3.2 read_digital() with no digital input task raises RuntimeError."""
+        w = NIDAQWrapper()
+        with pytest.raises(RuntimeError, match="digital input task"):
+            w.read_digital()
+
+    def test_read_digital_not_connected_raises(self, NIDAQWrapper, wrapper_module):
+        """3.3 read_digital() when configured but not connected raises error."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        # _task_digital_in is None (not connected)
+        with pytest.raises(RuntimeError, match="[Cc]onnect"):
+            w.read_digital()
+
+    def test_read_digital_acquires_lock(self, NIDAQWrapper, wrapper_module):
+        """3.4 read_digital() acquires the RLock during execution."""
+        mock_di = _make_mock_digital_input()
+        mock_di.read.return_value = np.array([True])
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        w._task_digital_in = mock_di
+        original_lock = w._lock
+        w._lock = MagicMock(wraps=original_lock)
+
+        w.read_digital()
+        w._lock.__enter__.assert_called()
+
+
+# ===================================================================
+# 23. write_digital() Method (FR-6.10c)
+# ===================================================================
+
+class TestWriteDigital:
+    """Task group 23: write_digital() method."""
+
+    def test_write_digital_delegates_to_digital_output(self, NIDAQWrapper, wrapper_module):
+        """5.1 write_digital(data) delegates to DigitalOutput.write(data)."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+
+        w.write_digital(True)
+        mock_do.write.assert_called_once_with(True)
+
+    def test_write_digital_no_task_raises(self, NIDAQWrapper):
+        """5.2 write_digital() with no digital output task raises RuntimeError."""
+        w = NIDAQWrapper()
+        with pytest.raises(RuntimeError, match="digital output task"):
+            w.write_digital(True)
+
+    def test_write_digital_not_connected_raises(self, NIDAQWrapper, wrapper_module):
+        """5.3 write_digital() when configured but not connected raises error."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        # _task_digital_out is None (not connected)
+        with pytest.raises(RuntimeError, match="[Cc]onnect"):
+            w.write_digital(True)
+
+    def test_write_digital_acquires_lock(self, NIDAQWrapper, wrapper_module):
+        """5.4 write_digital() acquires the RLock during execution."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+        original_lock = w._lock
+        w._lock = MagicMock(wraps=original_lock)
+
+        w.write_digital(True)
+        w._lock.__enter__.assert_called()
+
+    def test_write_digital_single_bool(self, NIDAQWrapper, wrapper_module):
+        """5.5 write_digital(True) with single boolean value."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+
+        w.write_digital(True)
+        mock_do.write.assert_called_once_with(True)
+
+    def test_write_digital_list(self, NIDAQWrapper, wrapper_module):
+        """5.6 write_digital([True, False, True]) with list for multi-line."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+
+        data = [True, False, True]
+        w.write_digital(data)
+        mock_do.write.assert_called_once_with(data)
+
+
+# ===================================================================
+# 24. Digital Tasks in connect()/disconnect() Lifecycle (FR-6.10d)
+# ===================================================================
+
+class TestDigitalLifecycle:
+    """Task group 24: Digital tasks in connect()/disconnect() lifecycle."""
+
+    def test_connect_initiates_digital_input(self, NIDAQWrapper, wrapper_module):
+        """7.1 connect() calls initiate() on configured DigitalInput task."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
+            w.connect()
+
+        mock_di.initiate.assert_called_once()
+        assert w._task_digital_in is mock_di
+
+    def test_connect_initiates_digital_output(self, NIDAQWrapper, wrapper_module):
+        """7.2 connect() calls initiate() on configured DigitalOutput task."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
+            w.connect()
+
+        mock_do.initiate.assert_called_once()
+        assert w._task_digital_out is mock_do
+
+    def test_connect_initiates_both_analog_and_digital(self, NIDAQWrapper, wrapper_module):
+        """7.3 connect() with both analog and digital tasks initiates all."""
+        mock_di = _make_mock_digital_input()
+        mock_do = _make_mock_digital_output()
+        mock_loaded_task = _make_mock_nidaqmx_task()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput), \
+             patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(
+                task_in="AnalogIn",
+                task_digital_in=mock_di,
+                task_digital_out=mock_do,
+            )
+
+        with patch.object(wrapper_module, "get_task_by_name", return_value=mock_loaded_task), \
+             patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
+            result = w.connect()
+
+        assert result is True
+        mock_di.initiate.assert_called_once()
+        mock_do.initiate.assert_called_once()
+
+    def test_disconnect_clears_digital_input(self, NIDAQWrapper, wrapper_module):
+        """7.4 disconnect() calls clear_task() on active DigitalInput task."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        # Simulate connected state
+        w._task_digital_in = mock_di
+
+        w.disconnect()
+        mock_di.clear_task.assert_called_once()
+        assert w._task_digital_in is None
+
+    def test_disconnect_clears_digital_output(self, NIDAQWrapper, wrapper_module):
+        """7.5 disconnect() calls clear_task() on active DigitalOutput task."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+
+        w.disconnect()
+        mock_do.clear_task.assert_called_once()
+        assert w._task_digital_out is None
+
+    def test_disconnect_idempotent_with_digital(self, NIDAQWrapper, wrapper_module):
+        """7.6 disconnect() called multiple times does not raise."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        w._task_digital_in = mock_di
+
+        result1 = w.disconnect()
+        result2 = w.disconnect()
+        assert result1 is True
+        assert result2 is True
+
+    def test_connect_with_string_digital_task(self, NIDAQWrapper, wrapper_module):
+        """7.7 connect() with string digital task name loads from NI MAX."""
+        w = NIDAQWrapper()
+        w.configure(task_digital_in="MyDigitalTask")
+
+        mock_loaded = _make_mock_nidaqmx_task()
+
+        with patch.object(wrapper_module, "get_task_by_name", return_value=mock_loaded), \
+             patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
+            w.connect()
+
+        assert w._task_digital_in is mock_loaded
+
+    def test_connect_digital_initiate_failure_does_not_prevent_analog(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """7.8 Digital initiate() failure doesn't prevent analog connect()."""
+        mock_di = _make_mock_digital_input()
+        mock_di.initiate.side_effect = RuntimeError("digital init failed")
+        mock_loaded_task = _make_mock_nidaqmx_task()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_in="AnalogIn", task_digital_in=mock_di)
+
+        with patch.object(wrapper_module, "get_task_by_name", return_value=mock_loaded_task), \
+             patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
+            result = w.connect()
+
+        # Analog succeeds despite digital failure
+        assert result is True
+        assert w._task_in is not None
+        # Digital was NOT set (initiate failed)
+        assert w._task_digital_in is None
+
+    def test_disconnect_digital_failure_does_not_prevent_analog_cleanup(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """8.5 Digital task cleanup failure doesn't prevent analog cleanup."""
+        mock_di = _make_mock_digital_input()
+        mock_di.clear_task.side_effect = RuntimeError("digital cleanup failed")
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_in="AnalogIn", task_digital_in=mock_di)
+
+        # Simulate connected state
+        mock_analog_task = _make_mock_nidaqmx_task()
+        w._task_in = mock_analog_task
+        w._task_digital_in = mock_di
+        w._connected = True
+
+        # disconnect should not raise despite digital failure
+        result = w.disconnect()
+        assert result is True
+        mock_analog_task.close.assert_called()
+
+
+# ===================================================================
+# 25. Digital Tasks in Context Manager (FR-6.10e)
+# ===================================================================
+
+class TestDigitalContextManager:
+    """Task group 25: Digital tasks in context manager."""
+
+    def test_context_manager_cleans_up_digital_on_normal_exit(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """9.1 Context manager normal exit cleans up digital tasks."""
+        mock_di = _make_mock_digital_input()
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput), \
+             patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di, task_digital_out=mock_do)
+
+        w._task_digital_in = mock_di
+        w._task_digital_out = mock_do
+
+        with w:
+            pass  # normal exit
+
+        mock_di.clear_task.assert_called_once()
+        mock_do.clear_task.assert_called_once()
+
+    def test_context_manager_cleans_up_digital_on_exception(
+        self, NIDAQWrapper, wrapper_module
+    ):
+        """9.2 Context manager exception exit still cleans up digital tasks."""
+        mock_di = _make_mock_digital_input()
+
+        with patch.object(wrapper_module, "DigitalInput", new=_FakeDigitalInput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_in=mock_di)
+
+        w._task_digital_in = mock_di
+
+        with pytest.raises(RuntimeError):
+            with w:
+                raise RuntimeError("test exception")
+
+        mock_di.clear_task.assert_called_once()
+
+    def test_context_manager_digital_only(self, NIDAQWrapper, wrapper_module):
+        """9.3 Context manager with only digital tasks (no analog) cleans up."""
+        mock_do = _make_mock_digital_output()
+
+        with patch.object(wrapper_module, "DigitalOutput", new=_FakeDigitalOutput):
+            w = NIDAQWrapper()
+            w.configure(task_digital_out=mock_do)
+
+        w._task_digital_out = mock_do
+
+        with w:
+            pass
+
+        mock_do.clear_task.assert_called_once()
+        assert w._task_digital_out is None

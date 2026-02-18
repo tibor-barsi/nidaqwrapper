@@ -38,6 +38,7 @@ from typing import Any, Union
 
 import numpy as np
 
+from .digital import DigitalInput, DigitalOutput
 from .task_input import NITask
 from .task_output import NITaskOutput
 from .utils import get_connected_devices, get_task_by_name
@@ -130,6 +131,18 @@ class NIDAQWrapper:
         self._n_channels_out: int = 0
         self._required_devices: set[str] = set()
 
+        # Digital task state
+        self._task_digital_in_is_str = False
+        self._task_digital_in_is_obj = False
+        self._task_digital_in_name: str | None = None
+        self._task_digital_in_obj: DigitalInput | None = None
+        self._task_digital_in: Any | None = None  # active DigitalInput after connect
+        self._task_digital_out_is_str = False
+        self._task_digital_out_is_obj = False
+        self._task_digital_out_name: str | None = None
+        self._task_digital_out_obj: DigitalOutput | None = None
+        self._task_digital_out: Any | None = None  # active DigitalOutput after connect
+
         # Runtime flags
         self._acquire_running = False
         self._generation_running = False
@@ -139,7 +152,13 @@ class NIDAQWrapper:
         self.post_trigger_delay: float = kwargs.get("post_trigger_delay", 0.05)
 
         # If task kwargs provided, call configure (but NOT connect)
-        if task_in is not None or task_out is not None:
+        _has_tasks = (
+            task_in is not None
+            or task_out is not None
+            or kwargs.get("task_digital_in") is not None
+            or kwargs.get("task_digital_out") is not None
+        )
+        if _has_tasks:
             self.configure(task_in=task_in, task_out=task_out, **kwargs)
 
     # ------------------------------------------------------------------
@@ -150,20 +169,27 @@ class NIDAQWrapper:
         self,
         task_in: str | NITask | None = None,
         task_out: str | NITaskOutput | None = None,
+        task_digital_in: str | DigitalInput | None = None,
+        task_digital_out: str | DigitalOutput | None = None,
         **kwargs: Any,
     ) -> None:
-        """Configure input and/or output tasks.
+        """Configure input, output, and digital tasks.
 
         Accepts NI MAX task name strings or :class:`NITask` /
-        :class:`NITaskOutput` objects.  Resets all internal state so the
+        :class:`NITaskOutput` / :class:`DigitalInput` /
+        :class:`DigitalOutput` objects.  Resets all internal state so the
         wrapper can be reconfigured without creating a new instance.
 
         Parameters
         ----------
         task_in : str or NITask, optional
-            Input task specification.
+            Analog input task specification.
         task_out : str or NITaskOutput, optional
-            Output task specification.
+            Analog output task specification.
+        task_digital_in : str or DigitalInput, optional
+            Digital input task — object or NI MAX name string.
+        task_digital_out : str or DigitalOutput, optional
+            Digital output task — object or NI MAX name string.
         **kwargs
             ``acquisition_sleep``, ``post_trigger_delay``.
         """
@@ -175,6 +201,8 @@ class NIDAQWrapper:
         self._task_out = None
         self._task_in_obj_active = None
         self._task_out_obj_active = None
+        self._task_digital_in = None
+        self._task_digital_out = None
 
         # Timing parameters
         if "acquisition_sleep" in kwargs:
@@ -230,8 +258,65 @@ class NIDAQWrapper:
                 f"task_out must be a string or NITaskOutput, got {type(task_out).__name__}"
             )
 
+        # -- Digital input task ----------------------------------------
+        self._task_digital_in_is_str = False
+        self._task_digital_in_is_obj = False
+        self._task_digital_in_name = None
+        self._task_digital_in_obj = None
+
+        if isinstance(task_digital_in, str):
+            self._task_digital_in_is_str = True
+            self._task_digital_in_name = task_digital_in
+        elif isinstance(task_digital_in, DigitalInput):
+            self._task_digital_in_is_obj = True
+            self._task_digital_in_obj = task_digital_in
+        elif task_digital_in is not None:
+            raise TypeError(
+                f"task_digital_in must be a string or DigitalInput, "
+                f"got {type(task_digital_in).__name__}"
+            )
+
+        # -- Digital output task ---------------------------------------
+        self._task_digital_out_is_str = False
+        self._task_digital_out_is_obj = False
+        self._task_digital_out_name = None
+        self._task_digital_out_obj = None
+
+        if isinstance(task_digital_out, str):
+            self._task_digital_out_is_str = True
+            self._task_digital_out_name = task_digital_out
+        elif isinstance(task_digital_out, DigitalOutput):
+            self._task_digital_out_is_obj = True
+            self._task_digital_out_obj = task_digital_out
+        elif task_digital_out is not None:
+            raise TypeError(
+                f"task_digital_out must be a string or DigitalOutput, "
+                f"got {type(task_digital_out).__name__}"
+            )
+
+        # Validate at least one task provided
+        has_any = (
+            self._task_in_is_str
+            or self._task_in_is_obj
+            or self._task_out_is_str
+            or self._task_out_is_obj
+            or self._task_digital_in_is_str
+            or self._task_digital_in_is_obj
+            or self._task_digital_out_is_str
+            or self._task_digital_out_is_obj
+        )
+        if not has_any:
+            raise ValueError(
+                "At least one task must be provided (task_in, task_out, "
+                "task_digital_in, or task_digital_out)."
+            )
+
         self._configured = True
-        logger.debug("Configured: task_in=%s, task_out=%s", task_in, task_out)
+        logger.debug(
+            "Configured: task_in=%s, task_out=%s, "
+            "task_digital_in=%s, task_digital_out=%s",
+            task_in, task_out, task_digital_in, task_digital_out,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle: connect / disconnect
@@ -292,6 +377,50 @@ class NIDAQWrapper:
                     self._task_out_obj_active = ni_task_out
                     self._extract_output_metadata_from_ni_task_out(ni_task_out)
 
+                # -- Digital input task ---------------------------------
+                self._close_digital_in()
+                if self._task_digital_in_is_str:
+                    loaded = get_task_by_name(self._task_digital_in_name)
+                    if loaded is not None:
+                        self._task_digital_in = loaded
+                    else:
+                        logger.error(
+                            "Failed to load digital input task '%s'.",
+                            self._task_digital_in_name,
+                        )
+
+                elif self._task_digital_in_is_obj:
+                    try:
+                        self._task_digital_in_obj.initiate()
+                        self._task_digital_in = self._task_digital_in_obj
+                    except Exception:
+                        logger.warning(
+                            "Digital input task initiation failed.",
+                            exc_info=True,
+                        )
+
+                # -- Digital output task --------------------------------
+                self._close_digital_out()
+                if self._task_digital_out_is_str:
+                    loaded = get_task_by_name(self._task_digital_out_name)
+                    if loaded is not None:
+                        self._task_digital_out = loaded
+                    else:
+                        logger.error(
+                            "Failed to load digital output task '%s'.",
+                            self._task_digital_out_name,
+                        )
+
+                elif self._task_digital_out_is_obj:
+                    try:
+                        self._task_digital_out_obj.initiate()
+                        self._task_digital_out = self._task_digital_out_obj
+                    except Exception:
+                        logger.warning(
+                            "Digital output task initiation failed.",
+                            exc_info=True,
+                        )
+
                 # Build required devices set
                 self._required_devices = set()
                 if self._task_in is not None:
@@ -308,6 +437,21 @@ class NIDAQWrapper:
                     logger.info("Connected successfully.")
                     return True
                 else:
+                    # Digital-only configs have no required_devices
+                    # and will fail ping — still mark as connected
+                    has_digital = (
+                        self._task_digital_in is not None
+                        or self._task_digital_out is not None
+                    )
+                    has_analog = (
+                        self._task_in is not None
+                        or self._task_out is not None
+                    )
+                    if has_digital and not has_analog:
+                        self._connected = True
+                        self._state = "connected"
+                        logger.info("Connected (digital tasks only).")
+                        return True
                     self._connected = False
                     logger.warning("Connected but ping failed.")
                     return False
@@ -337,6 +481,8 @@ class NIDAQWrapper:
 
             self._close_task_in()
             self._close_task_out()
+            self._close_digital_in()
+            self._close_digital_out()
             self._connected = False
             self._state = "disconnected"
             logger.debug("Disconnected.")
@@ -576,6 +722,71 @@ class NIDAQWrapper:
             return data
 
     # ------------------------------------------------------------------
+    # Digital I/O
+    # ------------------------------------------------------------------
+
+    def read_digital(self) -> np.ndarray:
+        """Read the current state of all configured digital input lines.
+
+        Delegates to the stored :class:`DigitalInput` task's ``read()``
+        method for on-demand reading.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array of bool-like values, one per line.
+
+        Raises
+        ------
+        RuntimeError
+            If no digital input task is configured or not connected.
+        """
+        with self._lock:
+            if not (self._task_digital_in_is_str or self._task_digital_in_is_obj):
+                raise RuntimeError(
+                    "No digital input task configured. "
+                    "Call configure(task_digital_in=...) first."
+                )
+            if self._task_digital_in is None:
+                raise RuntimeError(
+                    "Digital input task is configured but not connected. "
+                    "Call connect() first."
+                )
+            return self._task_digital_in.read()
+
+    def write_digital(
+        self, data: bool | int | list | np.ndarray
+    ) -> None:
+        """Write values to all configured digital output lines.
+
+        Delegates to the stored :class:`DigitalOutput` task's ``write()``
+        method for on-demand writing.
+
+        Parameters
+        ----------
+        data : bool, int, list, or numpy.ndarray
+            Data to write.  Single bool/int for single-line, list or
+            array for multi-line.
+
+        Raises
+        ------
+        RuntimeError
+            If no digital output task is configured or not connected.
+        """
+        with self._lock:
+            if not (self._task_digital_out_is_str or self._task_digital_out_is_obj):
+                raise RuntimeError(
+                    "No digital output task configured. "
+                    "Call configure(task_digital_out=...) first."
+                )
+            if self._task_digital_out is None:
+                raise RuntimeError(
+                    "Digital output task is configured but not connected. "
+                    "Call connect() first."
+                )
+            self._task_digital_out.write(data)
+
+    # ------------------------------------------------------------------
     # Generation
     # ------------------------------------------------------------------
 
@@ -694,7 +905,13 @@ class NIDAQWrapper:
 
             self._task_out.out_stream.output_buf_size = 2
             self._task_out.write(write_data, auto_start=True)
-            self._task_out.stop()
+            try:
+                self._task_out.stop()
+            except Exception:
+                # Some devices (e.g. NI 9260) may report DAC underrun
+                # (-200018) when the 2-sample buffer drains before stop().
+                # This is benign for single-sample DC output.
+                pass
             logger.debug("Single-sample write completed.")
 
     def stop_generation(self) -> None:
@@ -912,6 +1129,28 @@ class NIDAQWrapper:
             except Exception:
                 logger.warning("Exception clearing NITaskOutput.", exc_info=True)
             self._task_out_obj_active = None
+
+    def _close_digital_in(self) -> None:
+        """Close the active digital input task."""
+        if self._task_digital_in is not None:
+            try:
+                self._task_digital_in.clear_task()
+            except Exception:
+                logger.warning(
+                    "Exception clearing digital input task.", exc_info=True
+                )
+            self._task_digital_in = None
+
+    def _close_digital_out(self) -> None:
+        """Close the active digital output task."""
+        if self._task_digital_out is not None:
+            try:
+                self._task_digital_out.clear_task()
+            except Exception:
+                logger.warning(
+                    "Exception clearing digital output task.", exc_info=True
+                )
+            self._task_digital_out = None
 
     def _recreate_ni_task_in(self) -> NITask:
         """Recreate an NITask from stored channel configuration.
