@@ -25,17 +25,15 @@ independent class that operates on pre-configured nidaqmx tasks.
 
 from __future__ import annotations
 
-import logging
 import threading
 import time
+import warnings
 
 import numpy as np
 
 from .utils import get_connected_devices, get_task_by_name
 from .task_input import NITask
 from .task_output import NITaskOutput
-
-logger = logging.getLogger("nidaqwrapper.advanced")
 
 try:
     import nidaqmx
@@ -204,7 +202,6 @@ class NIAdvanced:
 
         self._define_required_devices()
         self._configured = True
-        logger.info("NIAdvanced configured successfully.")
         return True
 
     def connect(self) -> bool:
@@ -223,9 +220,6 @@ class NIAdvanced:
             result = self.ping()
             if result:
                 self._connected = True
-                logger.info("NIAdvanced connected.")
-            else:
-                logger.error("NIAdvanced connection failed: device(s) not found.")
             return result
 
     def disconnect(self) -> bool:
@@ -243,16 +237,15 @@ class NIAdvanced:
                 try:
                     task.close()
                 except Exception as exc:
-                    logger.warning("Error closing input task: %s", exc)
+                    warnings.warn(str(exc), stacklevel=2)
 
             for task in self.output_tasks:
                 try:
                     task.close()
                 except Exception as exc:
-                    logger.warning("Error closing output task: %s", exc)
+                    warnings.warn(str(exc), stacklevel=2)
 
             self._connected = False
-            logger.info("NIAdvanced disconnected.")
             return True
 
     def ping(self) -> bool:
@@ -271,10 +264,7 @@ class NIAdvanced:
         """
         connected = get_connected_devices()
         if self.required_devices.issubset(connected):
-            logger.debug("Ping OK: all required devices present.")
             return True
-        missing = self.required_devices - connected
-        logger.error("Ping failed: missing devices %s", missing)
         return False
 
     # -----------------------------------------------------------------------
@@ -480,13 +470,6 @@ class NIAdvanced:
             presamples=presamples,
         )
         self._trigger_is_set = True
-        logger.debug(
-            "Trigger set: n_samples=%d, channel=%d, level=%s, type=%s",
-            n_samples,
-            trigger_channel,
-            trigger_level,
-            trigger_type,
-        )
 
     def _reset_trigger(self) -> None:
         """Reset the pyTrigger instance to its initial state.
@@ -503,7 +486,6 @@ class NIAdvanced:
             self.trigger.rows_left = self.trigger.rows
             self.trigger.finished = False
             self.trigger.first_data = True
-        logger.debug("Trigger reset.")
 
     # -----------------------------------------------------------------------
     # Device management
@@ -521,7 +503,6 @@ class NIAdvanced:
             self.required_devices.update(self._get_task_devices(task))
         for task in self.output_tasks:
             self.required_devices.update(self._get_task_devices(task))
-        logger.debug("Required devices: %s", self.required_devices)
 
     def _get_task_devices(self, task) -> set:
         """Return the set of device names used by a nidaqmx task.
@@ -688,10 +669,6 @@ class NIAdvanced:
             except DaqError as exc:
                 # Bug fix #1 — integer comparison, not string
                 if exc.error_code == _DAQ_ERROR_INVALID_TASK:
-                    logger.error(
-                        "Task is invalid or does not exist (error %d).",
-                        exc.error_code,
-                    )
                     return False
                 raise
 
@@ -700,14 +677,9 @@ class NIAdvanced:
                 _ = task.channel_names
             except DaqError as exc:
                 if exc.error_code == _DAQ_ERROR_NO_CHANNELS:
-                    logger.error(
-                        "Task has no channels configured (error %d).",
-                        exc.error_code,
-                    )
                     return False
                 raise
 
-        logger.debug("All tasks are valid.")
         return True
 
     def _validate_sample_rates(self, tasks: list) -> bool:
@@ -729,12 +701,8 @@ class NIAdvanced:
 
         rates = {task.timing.samp_clk_rate for task in tasks}
         if len(rates) > 1:
-            logger.error(
-                "All tasks must share the same sample rate. Found: %s", rates
-            )
             return False
 
-        logger.debug("Sample rate consistent: %s Hz", rates.pop())
         return True
 
     def _validate_timing(self, tasks: list) -> bool:
@@ -767,13 +735,8 @@ class NIAdvanced:
             configs.add(frozenset(cfg.items()))
 
         if len(configs) > 1:
-            logger.error(
-                "All tasks must have identical timing configuration. Found: %s",
-                configs,
-            )
             return False
 
-        logger.debug("Timing configuration consistent.")
         return True
 
     def _validate_triggers(self, tasks: list) -> bool:
@@ -805,10 +768,6 @@ class NIAdvanced:
         }
 
         if len(trig_type_names) > 1:
-            logger.error(
-                "All tasks must have the same trigger type. Found: %s",
-                trig_type_names,
-            )
             return False
 
         trig_type_name = trig_type_names.pop()
@@ -816,7 +775,6 @@ class NIAdvanced:
         if trig_type_name == "NONE":
             # No hardware trigger — software mode
             self.trigger_type = "software"
-            logger.info("No hardware trigger; using software trigger.")
             return True
 
         # Validate that all tasks share the same trigger source
@@ -829,22 +787,12 @@ class NIAdvanced:
                 task.triggers.start_trigger.anlg_edge_src for task in tasks
             }
         else:
-            logger.error("Unsupported trigger type: %s", trig_type_name)
             return False
 
         if len(sources) > 1:
-            logger.error(
-                "All tasks must share the same trigger source. Found: %s",
-                sources,
-            )
             return False
 
         self.trigger_type = "hardware"
-        logger.info(
-            "Hardware trigger validated: type=%s, source=%s",
-            trig_type_name,
-            sources.pop(),
-        )
         return True
 
     def _validate_acquisition_mode(self, tasks: list) -> bool:
@@ -876,33 +824,18 @@ class NIAdvanced:
         modes = {task.timing.samp_quant_samp_mode.name for task in tasks}
 
         if len(modes) > 1:
-            logger.error(
-                "All tasks must share the same acquisition mode. Found: %s", modes
-            )
             return False
 
         mode = modes.pop().lower()
 
         if mode == "finite":
             if self.trigger_type == "hardware":
-                logger.info("FINITE mode with hardware trigger: valid.")
                 return True
-            logger.error(
-                "FINITE mode requires a hardware trigger; current trigger "
-                "type is '%s'.",
-                self.trigger_type,
-            )
             return False
 
         if mode == "continuous":
             if self.trigger_type == "software":
-                logger.info("CONTINUOUS mode with software trigger: valid.")
                 return True
-            logger.error(
-                "CONTINUOUS mode is incompatible with hardware trigger; "
-                "use FINITE mode instead."
-            )
             return False
 
-        logger.error("Unrecognised acquisition mode: %s", mode)
         return False

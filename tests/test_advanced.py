@@ -1081,6 +1081,42 @@ class TestConnectDisconnect:
         adv.disconnect()
         assert adv._connected is False
 
+    def test_disconnect_input_exception_warns_not_propagated(self, adv):
+        """13.7 disconnect() emits warning when input task close() raises."""
+        import warnings
+
+        t1 = _make_nidaqmx_task("In1")
+        t1.close.side_effect = RuntimeError("cleanup error")
+        adv.input_tasks = [t1]
+        adv.output_tasks = []
+        adv._connected = True
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            adv.disconnect()
+
+        assert len(w) >= 1
+        assert "cleanup error" in str(w[0].message)
+        assert adv._connected is False
+
+    def test_disconnect_output_exception_warns_not_propagated(self, adv):
+        """13.8 disconnect() emits warning when output task close() raises."""
+        import warnings
+
+        t_out = _make_nidaqmx_task("Out1")
+        t_out.close.side_effect = RuntimeError("output cleanup error")
+        adv.input_tasks = []
+        adv.output_tasks = [t_out]
+        adv._connected = True
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            adv.disconnect()
+
+        assert len(w) >= 1
+        assert "output cleanup error" in str(w[0].message)
+        assert adv._connected is False
+
 
 # ===================================================================
 # Group 14: set_trigger()
