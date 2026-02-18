@@ -825,9 +825,22 @@ class TestAcquireWithSoftwareTrigger:
     def _setup_trigger(self, adv, n_channels=1, sample_rate=25600.0):
         """Helper to set up a mock pyTrigger on the instance."""
         trigger = MagicMock()
-        trigger.finished = False
+        # _reset_trigger() accesses these attributes directly
+        trigger.ringbuff = MagicMock()
+        trigger.rows = 5000
+        trigger.rows_left = 5000
+        trigger.triggered = False
+        trigger.first_data = True
+        # PropertyMock for finished: getter returns False then True (after 2 calls),
+        # setter accepts the value without error (needed by _reset_trigger).
         call_count = [0]
-        def check_finished():
+        _finished_val = [False]
+        def check_finished(*args):
+            if args:
+                # setter call from _reset_trigger
+                _finished_val[0] = args[0]
+                call_count[0] = 0
+                return None
             call_count[0] += 1
             return call_count[0] >= 2
         type(trigger).finished = PropertyMock(side_effect=check_finished)

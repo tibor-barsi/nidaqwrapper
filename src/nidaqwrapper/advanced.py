@@ -474,9 +474,9 @@ class NIAdvanced:
         self.trigger = pyTrigger(
             n_samples,
             n_channels,
-            channel=trigger_channel,
+            trigger_channel=trigger_channel,
+            trigger_level=trigger_level,
             trigger_type=trigger_type,
-            level=trigger_level,
             presamples=presamples,
         )
         self._trigger_is_set = True
@@ -493,9 +493,16 @@ class NIAdvanced:
 
         Called at the start of each software-triggered acquisition so that
         previously accumulated data does not bleed into the new measurement.
+
+        pyTrigger does not provide a ``reset()`` method, so each attribute
+        is restored manually (same pattern as ``NIDAQWrapper._reset_trigger``).
         """
         if self.trigger is not None:
-            self.trigger.reset()
+            self.trigger.ringbuff.clear()
+            self.trigger.triggered = False
+            self.trigger.rows_left = self.trigger.rows
+            self.trigger.finished = False
+            self.trigger.first_data = True
         logger.debug("Trigger reset.")
 
     # -----------------------------------------------------------------------
