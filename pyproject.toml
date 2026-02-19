@@ -9,6 +9,8 @@ description = "Unified NI-DAQmx Python Wrapper"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
+authors = [{name = "Tibor Barsi"}]
+keywords = ["nidaqmx", "daq", "data-acquisition", "national-instruments", "measurement"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
