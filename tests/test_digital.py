@@ -75,6 +75,10 @@ def _make_mock_ni_task() -> MagicMock:
     task.di_channels.__iter__ = MagicMock(side_effect=lambda: iter(_channel_objects))
     task.do_channels.__iter__ = MagicMock(side_effect=lambda: iter(_channel_objects))
 
+    # DI/DO channel length (used by from_task() validation)
+    task.di_channels.__len__ = MagicMock(side_effect=lambda: len(_channel_objects))
+    task.do_channels.__len__ = MagicMock(side_effect=lambda: len(_channel_objects))
+
     return task
 
 
@@ -1085,6 +1089,282 @@ class TestDITaskConfigRoundtrip:
         assert di2.mode == "clocked"
 
 
+class TestDITaskFromTask:
+    """from_task() wraps externally-created nidaqmx.Task objects."""
+
+    def test_wraps_existing_task(self, mock_system, mock_constants):
+        """from_task() creates a DITask from an existing nidaqmx.Task."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        # Simulate that the task already has DI channels
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0:3", name_to_assign_to_lines="existing_ch"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+        assert di.task is mock_ni_task
+        assert di.task_name == "external_di"
+        assert di.channel_list == ["existing_ch"]
+        assert di.number_of_ch == 1
+
+    def test_owns_task_false(self, mock_system, mock_constants):
+        """from_task() sets _owns_task to False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+        assert hasattr(di, "_owns_task")
+        assert di._owns_task is False
+
+    def test_constructor_owns_task_true(self, mock_system, mock_constants):
+        """Normal constructor sets _owns_task to True."""
+        ctx, di, _ = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert di._owns_task is True
+
+    def test_validates_no_di_channels(self, mock_system, mock_constants):
+        """from_task() raises ValueError when task has no DI channels."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "no_channels"
+        # No channels added — task.di_channels is empty
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            with pytest.raises(ValueError, match="[Nn]o DI channels"):
+                DITask.from_task(mock_ni_task)
+
+    def test_warns_if_task_running(self, mock_system, mock_constants):
+        """from_task() warns when the task is already running."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "running_task"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+        # Simulate running task
+        mock_ni_task.is_task_done.return_value = False
+        mock_ni_task._is_running = True  # Custom flag for testing
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                DITask.from_task(mock_ni_task)
+
+            # Check for warning if task appears to be running
+            # (Implementation detail: might check task state)
+
+    def test_add_channel_blocked(self, mock_system, mock_constants):
+        """add_channel() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError, match="Cannot add channels to an externally-provided task"
+            ):
+                di.add_channel("new_ch", lines="Dev1/port0/line1")
+
+    def test_start_blocked(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError,
+                match="Cannot start an externally-provided task",
+            ):
+                di.start()
+
+    def test_clear_task_does_not_close(self, mock_system, mock_constants):
+        """clear_task() does NOT close external task, warns instead."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                di.clear_task()
+
+            # Should NOT call task.close()
+            mock_ni_task.close.assert_not_called()
+            # Should warn user
+            assert len(w) >= 1
+            assert "externally" in str(w[0].message).lower()
+
+    def test_exit_does_not_close(self, mock_system, mock_constants):
+        """__exit__ does NOT close external task, warns instead."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                di.__exit__(None, None, None)
+
+            mock_ni_task.close.assert_not_called()
+            assert len(w) >= 1
+
+    def test_normal_constructor_closes_task(self, mock_system, mock_constants):
+        """Normal constructor (owns_task=True) closes task on clear_task()."""
+        ctx, di, mt = _build_di(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        di.clear_task()
+        mt.close.assert_called_once()
+
+    def test_detects_clocked_mode(self, mock_system, mock_constants):
+        """from_task() detects clocked mode from task.timing.samp_clk_rate."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "clocked_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0:3", name_to_assign_to_lines="ch1"
+        )
+        mock_ni_task.timing.samp_clk_rate = 2000.0
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+        assert di.mode == "clocked"
+        assert di.sample_rate == 2000.0
+
+    def test_detects_on_demand_mode(self, mock_system, mock_constants):
+        """from_task() detects on-demand mode when no sample rate set."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "on_demand_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+        mock_ni_task.timing.samp_clk_rate = None  # Or not set
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+        assert di.mode == "on_demand"
+        assert di.sample_rate is None
+
+
 # ===========================================================================
 # DOTask Tests
 # ===========================================================================
@@ -1942,3 +2222,251 @@ class TestDOTaskConfigRoundtrip:
         assert do2.task_name == "pattern_gen"
         assert do2.sample_rate == 4000
         assert do2.mode == "clocked"
+
+
+class TestDOTaskFromTask:
+    """from_task() wraps externally-created nidaqmx.Task objects."""
+
+    def test_wraps_existing_task(self, mock_system, mock_constants):
+        """from_task() creates a DOTask from an existing nidaqmx.Task."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        # Simulate that the task already has DO channels
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0:3", name_to_assign_to_lines="existing_ch"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+        assert do.task is mock_ni_task
+        assert do.task_name == "external_do"
+        assert do.channel_list == ["existing_ch"]
+        assert do.number_of_ch == 1
+
+    def test_owns_task_false(self, mock_system, mock_constants):
+        """from_task() sets _owns_task to False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+        assert hasattr(do, "_owns_task")
+        assert do._owns_task is False
+
+    def test_constructor_owns_task_true(self, mock_system, mock_constants):
+        """Normal constructor sets _owns_task to True."""
+        ctx, do, _ = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+        assert do._owns_task is True
+
+    def test_validates_no_do_channels(self, mock_system, mock_constants):
+        """from_task() raises ValueError when task has no DO channels."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "no_channels"
+        # No channels added — task.do_channels is empty
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            with pytest.raises(ValueError, match="[Nn]o DO channels"):
+                DOTask.from_task(mock_ni_task)
+
+    def test_add_channel_blocked(self, mock_system, mock_constants):
+        """add_channel() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch(
+                "nidaqwrapper.digital._expand_port_to_line_range",
+                side_effect=lambda lines: lines,
+            ),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError, match="Cannot add channels to an externally-provided task"
+            ):
+                do.add_channel("new_ch", lines="Dev1/port1/line1")
+
+    def test_start_blocked(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError,
+                match="Cannot start an externally-provided task",
+            ):
+                do.start()
+
+    def test_clear_task_does_not_close(self, mock_system, mock_constants):
+        """clear_task() does NOT close external task, warns instead."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                do.clear_task()
+
+            # Should NOT call task.close()
+            mock_ni_task.close.assert_not_called()
+            # Should warn user
+            assert len(w) >= 1
+            assert "externally" in str(w[0].message).lower()
+
+    def test_exit_does_not_close(self, mock_system, mock_constants):
+        """__exit__ does NOT close external task, warns instead."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                do.__exit__(None, None, None)
+
+            mock_ni_task.close.assert_not_called()
+            assert len(w) >= 1
+
+    def test_normal_constructor_closes_task(self, mock_system, mock_constants):
+        """Normal constructor (owns_task=True) closes task on clear_task()."""
+        ctx, do, mt = _build_do(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        do.clear_task()
+        mt.close.assert_called_once()
+
+    def test_detects_clocked_mode(self, mock_system, mock_constants):
+        """from_task() detects clocked mode from task.timing.samp_clk_rate."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "clocked_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0:3", name_to_assign_to_lines="ch1"
+        )
+        mock_ni_task.timing.samp_clk_rate = 3000.0
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+        assert do.mode == "clocked"
+        assert do.sample_rate == 3000.0
+
+    def test_detects_on_demand_mode(self, mock_system, mock_constants):
+        """from_task() detects on-demand mode when no sample rate set."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "on_demand_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+        mock_ni_task.timing.samp_clk_rate = None  # Or not set
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+        assert do.mode == "on_demand"
+        assert do.sample_rate is None

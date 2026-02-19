@@ -139,6 +139,9 @@ class DITask:
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
+        # Track ownership — False when task is externally provided
+        self._owns_task: bool = True
+
     # -- Introspection properties -------------------------------------------
 
     @property
@@ -172,7 +175,15 @@ class DITask:
         ValueError
             If ``channel_name`` is already used or ``lines`` are already
             assigned to another channel.
+        RuntimeError
+            If this task was created via :meth:`from_task` (externally provided).
         """
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot add channels to an externally-provided task. "
+                "Configure channels on the nidaqmx.Task before calling from_task()."
+            )
+
         # Duplicate name detection: check what nidaqmx already knows about
         if channel_name in self.task.channel_names:
             raise ValueError(
@@ -216,7 +227,15 @@ class DITask:
         ------
         ValueError
             If no channels have been added to the task.
+        RuntimeError
+            If this task was created via :meth:`from_task` (externally provided).
         """
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot start an externally-provided task. "
+                "Start the nidaqmx.Task directly or pass an already-started task to from_task()."
+            )
+
         if not self.task.channel_names:
             raise ValueError(
                 "Cannot start: no channels have been added to this task. "
@@ -288,8 +307,23 @@ class DITask:
         """Close the underlying nidaqmx task and release hardware resources.
 
         Safe to call multiple times or when no task has been initiated.
+
+        Notes
+        -----
+        If this task was created via :meth:`from_task`, the underlying
+        nidaqmx.Task is NOT closed. The caller retains ownership and must
+        close it manually when done.
         """
         if hasattr(self, "task") and self.task is not None:
+            if not self._owns_task:
+                warnings.warn(
+                    "Task was created externally — not closing. "
+                    "Call task.close() when done.",
+                    stacklevel=2,
+                )
+                self.task = None
+                return
+
             try:
                 self.task.close()
             except Exception as exc:
@@ -383,6 +417,97 @@ class DITask:
 
         return task
 
+    @classmethod
+    def from_task(cls, task: nidaqmx.task.Task) -> DITask:
+        """Wrap an externally-created nidaqmx.Task in a DITask.
+
+        This classmethod provides an escape hatch for advanced users who need
+        to configure task properties not exposed by the wrapper API. The task
+        must already have DI channels configured before calling this method.
+
+        Parameters
+        ----------
+        task : nidaqmx.task.Task
+            A pre-configured nidaqmx.Task with at least one DI channel.
+
+        Returns
+        -------
+        DITask
+            A DITask instance wrapping the provided task. The wrapper does NOT
+            take ownership of the task; the caller must close it manually.
+
+        Raises
+        ------
+        ValueError
+            If the task has no DI channels configured.
+
+        Warnings
+        --------
+        Emits a UserWarning if the task is already running.
+
+        Notes
+        -----
+        When created via this method:
+
+        - :meth:`add_channel` and :meth:`start` will raise RuntimeError
+        - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
+        - The caller retains full ownership and must manage the task lifecycle
+
+        Examples
+        --------
+        >>> import nidaqmx
+        >>> task = nidaqmx.Task()
+        >>> task.di_channels.add_di_chan("Dev1/port0/line0:3")
+        >>> task.timing.cfg_samp_clk_timing(rate=1000)
+        >>> di = DITask.from_task(task)
+        >>> data = di.read_all_available()
+        >>> task.close()  # Caller must close
+        """
+        if len(task.di_channels) == 0:
+            raise ValueError("Task has no DI channels.")
+
+        # Warn if task is already running (check if task.is_task_done() exists)
+        try:
+            if hasattr(task, "is_task_done") and not task.is_task_done():
+                warnings.warn("Task is already running.", stacklevel=2)
+        except Exception:
+            # Suppress errors from checking task state
+            pass
+
+        # Create instance without calling __init__ (bypass constructor checks)
+        instance = object.__new__(cls)
+
+        # Populate attributes from the live task
+        instance.task = task
+        instance.task_name = task.name
+        # channel_list and number_of_ch are properties that read from task
+
+        # Detect mode from timing configuration
+        try:
+            sample_rate = task.timing.samp_clk_rate
+            if sample_rate and sample_rate > 0:
+                instance.sample_rate = sample_rate
+                instance.mode = "clocked"
+            else:
+                instance.sample_rate = None
+                instance.mode = "on_demand"
+        except Exception:
+            # No timing configured — assume on-demand
+            instance.sample_rate = None
+            instance.mode = "on_demand"
+
+        # Discover devices
+        system = nidaqmx.system.System.local()
+        instance.device_list = [dev.name for dev in system.devices]
+
+        # Initialize _channel_configs as empty (can't reconstruct original params)
+        instance._channel_configs = []
+
+        # Mark as externally owned
+        instance._owns_task = False
+
+        return instance
+
     # -- Context manager -----------------------------------------------------
 
     def __enter__(self) -> DITask:
@@ -456,6 +581,9 @@ class DOTask:
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
+        # Track ownership — False when task is externally provided
+        self._owns_task: bool = True
+
     # -- Introspection properties -------------------------------------------
 
     @property
@@ -489,7 +617,15 @@ class DOTask:
         ValueError
             If ``channel_name`` is already used or ``lines`` are already
             assigned to another channel.
+        RuntimeError
+            If this task was created via :meth:`from_task` (externally provided).
         """
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot add channels to an externally-provided task. "
+                "Configure channels on the nidaqmx.Task before calling from_task()."
+            )
+
         # Duplicate name detection: check what nidaqmx already knows about
         if channel_name in self.task.channel_names:
             raise ValueError(
@@ -533,7 +669,15 @@ class DOTask:
         ------
         ValueError
             If no channels have been added to the task.
+        RuntimeError
+            If this task was created via :meth:`from_task` (externally provided).
         """
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot start an externally-provided task. "
+                "Start the nidaqmx.Task directly or pass an already-started task to from_task()."
+            )
+
         if not self.task.channel_names:
             raise ValueError(
                 "Cannot start: no channels have been added to this task. "
@@ -604,8 +748,23 @@ class DOTask:
         """Close the underlying nidaqmx task and release hardware resources.
 
         Safe to call multiple times or when no task has been initiated.
+
+        Notes
+        -----
+        If this task was created via :meth:`from_task`, the underlying
+        nidaqmx.Task is NOT closed. The caller retains ownership and must
+        close it manually when done.
         """
         if hasattr(self, "task") and self.task is not None:
+            if not self._owns_task:
+                warnings.warn(
+                    "Task was created externally — not closing. "
+                    "Call task.close() when done.",
+                    stacklevel=2,
+                )
+                self.task = None
+                return
+
             try:
                 self.task.close()
             except Exception as exc:
@@ -698,6 +857,97 @@ class DOTask:
             task.add_channel(channel_name=ch["name"], lines=ch["lines"])
 
         return task
+
+    @classmethod
+    def from_task(cls, task: nidaqmx.task.Task) -> DOTask:
+        """Wrap an externally-created nidaqmx.Task in a DOTask.
+
+        This classmethod provides an escape hatch for advanced users who need
+        to configure task properties not exposed by the wrapper API. The task
+        must already have DO channels configured before calling this method.
+
+        Parameters
+        ----------
+        task : nidaqmx.task.Task
+            A pre-configured nidaqmx.Task with at least one DO channel.
+
+        Returns
+        -------
+        DOTask
+            A DOTask instance wrapping the provided task. The wrapper does NOT
+            take ownership of the task; the caller must close it manually.
+
+        Raises
+        ------
+        ValueError
+            If the task has no DO channels configured.
+
+        Warnings
+        --------
+        Emits a UserWarning if the task is already running.
+
+        Notes
+        -----
+        When created via this method:
+
+        - :meth:`add_channel` and :meth:`start` will raise RuntimeError
+        - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
+        - The caller retains full ownership and must manage the task lifecycle
+
+        Examples
+        --------
+        >>> import nidaqmx
+        >>> task = nidaqmx.Task()
+        >>> task.do_channels.add_do_chan("Dev1/port1/line0:3")
+        >>> task.timing.cfg_samp_clk_timing(rate=1000)
+        >>> do = DOTask.from_task(task)
+        >>> do.write_continuous(data)
+        >>> task.close()  # Caller must close
+        """
+        if len(task.do_channels) == 0:
+            raise ValueError("Task has no DO channels.")
+
+        # Warn if task is already running
+        try:
+            if hasattr(task, "is_task_done") and not task.is_task_done():
+                warnings.warn("Task is already running.", stacklevel=2)
+        except Exception:
+            # Suppress errors from checking task state
+            pass
+
+        # Create instance without calling __init__
+        instance = object.__new__(cls)
+
+        # Populate attributes from the live task
+        instance.task = task
+        instance.task_name = task.name
+        # channel_list and number_of_ch are properties that read from task
+
+        # Detect mode from timing configuration
+        try:
+            sample_rate = task.timing.samp_clk_rate
+            if sample_rate and sample_rate > 0:
+                instance.sample_rate = sample_rate
+                instance.mode = "clocked"
+            else:
+                instance.sample_rate = None
+                instance.mode = "on_demand"
+        except Exception:
+            # No timing configured — assume on-demand
+            instance.sample_rate = None
+            instance.mode = "on_demand"
+
+        # Discover devices
+        system = nidaqmx.system.System.local()
+        instance.device_list = [dev.name for dev in system.devices]
+
+        # Initialize _channel_configs as empty
+        instance._channel_configs = []
+
+        # Mark as externally owned
+        instance._owns_task = False
+
+        return instance
 
     # -- Context manager -----------------------------------------------------
 
