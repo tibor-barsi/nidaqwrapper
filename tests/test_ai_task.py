@@ -1779,3 +1779,263 @@ class TestConfigRoundtrip:
         assert kwargs["sensitivity"] == 100.0
         assert kwargs["min_val"] == -50.0
         assert kwargs["max_val"] == 50.0
+
+
+# ===========================================================================
+# Task Group 4: from_task() — External task injection
+# ===========================================================================
+
+class TestFromTask:
+    """from_task() wraps a pre-created nidaqmx.Task for external configuration."""
+
+    def test_creates_instance_without_init(self, mock_system, mock_constants):
+        """from_task() creates an AITask instance without calling __init__."""
+        system = mock_system(task_names=[])
+
+        # Create a mock nidaqmx task with one AI channel
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 51200
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        # Mock AI channel
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+
+        # Check if task is running (is_task_done property)
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+        # Verify instance was created and has the task
+        assert isinstance(task, AITask)
+        assert task.task is mock_ni_task
+        assert task._owns_task is False
+
+    def test_populates_properties_from_task(self, mock_system, mock_constants):
+        """from_task() reads and populates all instance attributes from the task."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 51200
+        mock_ni_task.timing.samp_quant_samp_mode = mock_constants.AcquisitionType.CONTINUOUS
+
+        mock_ch1 = MagicMock()
+        mock_ch1.name = "accel_x"
+        mock_ch2 = MagicMock()
+        mock_ch2.name = "accel_y"
+        mock_ni_task.ai_channels = [mock_ch1, mock_ch2]
+        mock_ni_task.channel_names = ["accel_x", "accel_y"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+        assert task.task_name == "external_task"
+        assert task.sample_rate == 51200
+        assert task.channel_list == ["accel_x", "accel_y"]
+        assert task.number_of_ch == 2
+        assert task.device_list == ["cDAQ1Mod1", "cDAQ1Mod2"]
+        assert task.device_product_type == ["NI 9234", "NI 9263"]
+        assert task.sample_mode == mock_constants.AcquisitionType.CONTINUOUS
+
+    def test_validation_no_ai_channels_raises(self, mock_system, mock_constants):
+        """from_task() raises ValueError when task has no AI channels."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "empty_task"
+        mock_ni_task.ai_channels = []
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(ValueError, match="no AI channels"):
+                AITask.from_task(mock_ni_task)
+
+    def test_warns_when_task_already_running(self, mock_system, mock_constants):
+        """from_task() warns when wrapping a task that is already running."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "running_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+
+        # Task is running (is_task_done returns False)
+        mock_ni_task.is_task_done.return_value = False
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                task = AITask.from_task(mock_ni_task)
+
+            assert len(w) >= 1
+            assert "already running" in str(w[0].message).lower()
+
+    def test_add_channel_blocked_raises(self, mock_system, mock_constants):
+        """add_channel() raises RuntimeError on externally-provided task."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel(
+                    "new_ch", device_ind=0, channel_ind=1,
+                    sensitivity=100.0, sensitivity_units="mV/g", units="g",
+                )
+
+    def test_start_blocked_raises(self, mock_system, mock_constants):
+        """start() raises RuntimeError on externally-provided task."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+            with pytest.raises(RuntimeError, match="Cannot start"):
+                task.start()
+
+    def test_clear_task_does_not_close_warns(self, mock_system, mock_constants):
+        """clear_task() does NOT close external task but warns."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                task.clear_task()
+
+            # Should warn but NOT call task.close()
+            mock_ni_task.close.assert_not_called()
+            assert len(w) >= 1
+            assert "externally" in str(w[0].message).lower()
+
+    def test_exit_does_not_close_warns(self, mock_system, mock_constants):
+        """__exit__ does NOT close external task but warns."""
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                task.__exit__(None, None, None)
+
+            # Should warn but NOT call task.close()
+            mock_ni_task.close.assert_not_called()
+            assert len(w) >= 1
+            assert "externally" in str(w[0].message).lower()
+
+    def test_normal_constructor_owns_task(self, mock_system, mock_constants):
+        """Normal constructor sets _owns_task=True and clear_task() closes."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        # Verify _owns_task is True
+        assert task._owns_task is True
+
+        # clear_task() should close the task
+        task.clear_task()
+        mt.close.assert_called_once()

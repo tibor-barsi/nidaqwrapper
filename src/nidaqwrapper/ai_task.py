@@ -102,6 +102,10 @@ class AITask:
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
+        # Ownership flag: True when this AITask created the nidaqmx.Task,
+        # False when wrapping an externally-provided task via from_task().
+        self._owns_task = True
+
     # -- Introspection properties -------------------------------------------
 
     @property
@@ -169,7 +173,18 @@ class AITask:
             device, invalid units, missing sensitivity, or missing units.
         TypeError
             Invalid *scale* type.
+        RuntimeError
+            If this task was created via :meth:`from_task` (channels must
+            be configured on the nidaqmx task before wrapping).
         """
+        # -- Ownership check ------------------------------------------------
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot add channels to an externally-provided task. "
+                "Configure channels on the nidaqmx.Task before calling "
+                "from_task()."
+            )
+
         # -- Basic validation -----------------------------------------------
         if units is None:
             raise ValueError(
@@ -339,6 +354,9 @@ class AITask:
         ValueError
             If the hardware driver coerces the sample rate to a different
             value than requested (some devices only support discrete rates).
+        RuntimeError
+            If this task was created via :meth:`from_task` (timing must
+            be configured on the nidaqmx task before wrapping).
 
         Notes
         -----
@@ -346,6 +364,13 @@ class AITask:
         task handle.  The task remains valid and can be reconfigured or
         closed by the caller.
         """
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot start an externally-provided task. "
+                "Start the nidaqmx.Task directly or pass an already-started "
+                "task to from_task()."
+            )
+
         if not self.task.channel_names:
             raise ValueError(
                 "Cannot start: no channels have been added to this task. "
@@ -405,8 +430,25 @@ class AITask:
         Closes the underlying ``nidaqmx.task.Task`` and sets ``self.task``
         to ``None``.  Safe to call on an already-cleared task or multiple
         times.
+
+        Notes
+        -----
+        When this task was created via :meth:`from_task`, the nidaqmx task
+        is NOT closed — the caller retains ownership and must call
+        ``task.close()`` when done.  A warning is issued as a reminder.
         """
         if hasattr(self, "task") and self.task is not None:
+            # If we don't own the task, skip close and warn the user
+            if hasattr(self, "_owns_task") and not self._owns_task:
+                warnings.warn(
+                    "Task was created externally — not closing. "
+                    "Call task.close() when done.",
+                    stacklevel=2,
+                )
+                self.task = None
+                return
+
+            # Normal path: we own the task, close it
             try:
                 self.task.close()
             except Exception as exc:
@@ -606,6 +648,88 @@ class AITask:
             )
 
         return task
+
+    @classmethod
+    def from_task(cls, task: nidaqmx.task.Task) -> AITask:
+        """Wrap a pre-created ``nidaqmx.task.Task`` object.
+
+        Creates an :class:`AITask` instance that wraps an existing nidaqmx
+        task instead of creating its own.  This provides an escape hatch for
+        advanced users who need to configure task properties not exposed by
+        the wrapper API.
+
+        When wrapping an external task, :meth:`add_channel` and :meth:`start`
+        are blocked — the caller is responsible for configuring and starting
+        the task before or after wrapping it.  :meth:`clear_task` and
+        ``__exit__`` will NOT close the task; the caller must call
+        ``task.close()`` when done.
+
+        Parameters
+        ----------
+        task : nidaqmx.task.Task
+            A pre-created nidaqmx Task object with at least one AI channel.
+
+        Returns
+        -------
+        AITask
+            An :class:`AITask` instance wrapping the provided task.
+
+        Raises
+        ------
+        ValueError
+            If the task has no AI channels.
+
+        Warnings
+        --------
+        If the task is already running, a warning is issued.
+
+        Examples
+        --------
+        >>> import nidaqmx
+        >>> raw_task = nidaqmx.task.Task("external")
+        >>> raw_task.ai_channels.add_ai_voltage_chan("Dev1/ai0")
+        >>> raw_task.timing.cfg_samp_clk_timing(rate=25600)
+        >>> wrapped = AITask.from_task(raw_task)
+        >>> data = wrapped.acquire_base()
+        >>> raw_task.close()  # Caller must close the task
+        """
+        _require_nidaqmx()
+
+        # Validation: task must have at least one AI channel
+        if len(task.ai_channels) == 0:
+            raise ValueError("Task has no AI channels.")
+
+        # Check if task is already running and warn
+        try:
+            if not task.is_task_done():
+                warnings.warn(
+                    "Task is already running.",
+                    stacklevel=2,
+                )
+        except Exception:
+            # Some task states may not support is_task_done(); ignore
+            pass
+
+        # Create instance without calling __init__ (use object.__new__)
+        instance = object.__new__(cls)
+
+        # Populate all instance attributes by reading from the live task
+        system = nidaqmx.system.System.local()
+        instance.device_list = [d.name for d in system.devices]
+        instance.device_product_type = [d.product_type for d in system.devices]
+
+        instance.task = task
+        instance.task_name = task.name
+        instance.sample_rate = float(task.timing.samp_clk_rate)
+        instance.sample_mode = task.timing.samp_quant_samp_mode
+
+        # Channel configs: not available for external tasks (no serialisation)
+        instance._channel_configs = []
+
+        # Ownership: this task was NOT created by us
+        instance._owns_task = False
+
+        return instance
 
     def __enter__(self) -> AITask:
         """Enter the runtime context; return ``self``."""
