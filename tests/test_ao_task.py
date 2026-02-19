@@ -1190,3 +1190,345 @@ max_val = 10.0
         from nidaqwrapper.ao_task import AOTask
         with pytest.raises(Exception):  # tomllib.TOMLDecodeError
             AOTask.from_config(path)
+
+
+# ===========================================================================
+# Task Group: from_task() — external task injection
+# ===========================================================================
+
+class TestFromTask:
+    """from_task() wraps a pre-created nidaqmx.Task object."""
+
+    def _make_external_task(
+        self,
+        mock_system,
+        mock_constants,
+        channel_count: int = 1,
+        is_running: bool = False,
+        sample_rate: float = 10000,
+        samples_per_channel: int = 50000,
+    ) -> MagicMock:
+        """Create a mock nidaqmx.Task with AO channels configured."""
+        task = MagicMock()
+        task.name = "external_task"
+
+        # Configure AO channels
+        channel_objects = []
+        channel_names = []
+        for i in range(channel_count):
+            ch = MagicMock()
+            ch.name = f"ao_{i}"
+            ch.physical_channel = MagicMock()
+            ch.physical_channel.name = f"cDAQ1Mod1/ao{i}"
+            channel_objects.append(ch)
+            channel_names.append(f"ao_{i}")
+
+        task.ao_channels = channel_objects
+        task.channel_names = channel_names
+
+        # Configure timing
+        task.timing = MagicMock()
+        task.timing.samp_clk_rate = sample_rate
+        task.timing.samp_quant_samp_per_chan = samples_per_channel
+        task.timing.samp_quant_samp_mode = mock_constants.AcquisitionType.CONTINUOUS
+
+        # Task state (running or not)
+        if is_running:
+            # Mock task._saved_name or task.is_task_done() to indicate running state
+            task.is_task_done = MagicMock(return_value=False)
+        else:
+            task.is_task_done = MagicMock(return_value=True)
+
+        return task
+
+    def test_creates_instance_without_calling_init(self, mock_system, mock_constants):
+        """from_task() creates an AOTask without calling __init__."""
+        # We verify this by checking that nidaqmx.Task() is NOT called
+        # (which would happen in __init__ to create a new task)
+        external = self._make_external_task(mock_system, mock_constants)
+        system = mock_system(task_names=[])
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task") as mock_task_cls,
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+            # nidaqmx.Task() should NOT be called (no new task created)
+            mock_task_cls.assert_not_called()
+            assert task.task is external
+
+    def test_populates_task_attribute(self, mock_system, mock_constants):
+        """from_task() sets self.task to the provided task object."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.task is external
+
+    def test_populates_task_name(self, mock_system, mock_constants):
+        """from_task() reads task_name from task.name."""
+        external = self._make_external_task(mock_system, mock_constants)
+        external.name = "my_external_task"
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.task_name == "my_external_task"
+
+    def test_populates_sample_rate(self, mock_system, mock_constants):
+        """from_task() reads sample_rate from task.timing.samp_clk_rate."""
+        external = self._make_external_task(
+            mock_system, mock_constants, sample_rate=20000
+        )
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.sample_rate == 20000
+
+    def test_populates_channel_list(self, mock_system, mock_constants):
+        """from_task() reads channel names from task.ao_channels."""
+        external = self._make_external_task(mock_system, mock_constants, channel_count=3)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.channel_list == ["ao_0", "ao_1", "ao_2"]
+
+    def test_populates_samples_per_channel(self, mock_system, mock_constants):
+        """from_task() reads samples_per_channel from task.timing.samp_quant_samp_per_chan."""
+        external = self._make_external_task(
+            mock_system, mock_constants, samples_per_channel=100000
+        )
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.samples_per_channel == 100000
+
+    def test_populates_sample_mode(self, mock_system, mock_constants):
+        """from_task() reads sample_mode from task.timing.samp_quant_samp_mode."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.sample_mode == mock_constants.AcquisitionType.CONTINUOUS
+
+    def test_sets_owns_task_false(self, mock_system, mock_constants):
+        """from_task() sets _owns_task to False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task._owns_task is False
+
+    def test_constructor_sets_owns_task_true(self, mock_system, mock_constants):
+        """Normal __init__() sets _owns_task to True."""
+        ctx, task, _ = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        assert task._owns_task is True
+
+    def test_validates_no_ao_channels_raises(self, mock_system, mock_constants):
+        """from_task() raises ValueError when task has no AO channels."""
+        task = MagicMock()
+        task.name = "empty_task"
+        task.ao_channels = []  # No channels
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            with pytest.raises(ValueError, match="no AO channels"):
+                AOTask.from_task(task)
+
+    def test_warns_when_task_already_running(self, mock_system, mock_constants):
+        """from_task() warns when the task is already running."""
+        external = self._make_external_task(
+            mock_system, mock_constants, is_running=True
+        )
+
+        with (
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            warnings.simplefilter("always")
+            from nidaqwrapper.ao_task import AOTask
+            AOTask.from_task(external)
+
+        assert len(w) >= 1
+        assert "running" in str(w[0].message).lower()
+
+    def test_no_warning_when_task_not_running(self, mock_system, mock_constants):
+        """from_task() does NOT warn when the task is not running."""
+        external = self._make_external_task(
+            mock_system, mock_constants, is_running=False
+        )
+
+        with (
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            warnings.simplefilter("always")
+            from nidaqwrapper.ao_task import AOTask
+            AOTask.from_task(external)
+
+        # Should be no warnings
+        assert len(w) == 0
+
+    def test_add_channel_blocked_raises(self, mock_system, mock_constants):
+        """add_channel() raises RuntimeError when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel("new_channel", device_ind=0, channel_ind=1)
+
+    def test_add_channel_allowed_when_owns_task(self, mock_system, mock_constants):
+        """add_channel() succeeds when _owns_task is True (normal constructor)."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel("ao_0", device_ind=0, channel_ind=0)  # Should not raise
+
+        assert task.number_of_ch == 1
+
+    def test_start_blocked_raises(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+            with pytest.raises(RuntimeError, match="Cannot start"):
+                task.start()
+
+    def test_start_allowed_when_owns_task(self, mock_system, mock_constants):
+        """start() succeeds when _owns_task is True (normal constructor)."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.start()  # Should not raise
+
+    def test_clear_task_does_not_close_external(self, mock_system, mock_constants):
+        """clear_task() does NOT call task.close() when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+            task.clear_task()
+
+        external.close.assert_not_called()
+        assert task.task is external  # Task reference remains
+
+    def test_clear_task_warns_external(self, mock_system, mock_constants):
+        """clear_task() warns when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            warnings.simplefilter("always")
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+            task.clear_task()
+
+        assert len(w) >= 1
+        assert "externally" in str(w[0].message).lower()
+
+    def test_clear_task_closes_owned(self, mock_system, mock_constants):
+        """clear_task() calls task.close() when _owns_task is True."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        task.clear_task()
+        mt.close.assert_called_once()
+
+    def test_exit_does_not_close_external(self, mock_system, mock_constants):
+        """__exit__ does NOT close external task when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+            task.__exit__(None, None, None)
+
+        external.close.assert_not_called()
+
+    def test_exit_warns_external(self, mock_system, mock_constants):
+        """__exit__ warns when _owns_task is False."""
+        external = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+            warnings.catch_warnings(record=True) as w,
+        ):
+            warnings.simplefilter("always")
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+            task.__exit__(None, None, None)
+
+        assert len(w) >= 1
+        assert "externally" in str(w[0].message).lower()
+
+    def test_exit_closes_owned(self, mock_system, mock_constants):
+        """__exit__ closes task when _owns_task is True."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+
+        task.__exit__(None, None, None)
+        mt.close.assert_called_once()
+
+    def test_generate_works_with_external_task(self, mock_system, mock_constants):
+        """generate() works correctly with an external task."""
+        external = self._make_external_task(mock_system, mock_constants, channel_count=2)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+            signal = np.random.rand(1000, 2)
+            task.generate(signal)
+
+        external.write.assert_called_once()
+
+    def test_channel_list_property_external(self, mock_system, mock_constants):
+        """channel_list property reads from external task correctly."""
+        external = self._make_external_task(mock_system, mock_constants, channel_count=2)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        # The property should delegate to task.channel_names
+        assert task.channel_list == ["ao_0", "ao_1"]
+
+    def test_number_of_ch_property_external(self, mock_system, mock_constants):
+        """number_of_ch property reads from external task correctly."""
+        external = self._make_external_task(mock_system, mock_constants, channel_count=3)
+
+        with patch("nidaqwrapper.ao_task.constants", mock_constants):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(external)
+
+        assert task.number_of_ch == 3

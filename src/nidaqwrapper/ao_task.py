@@ -111,6 +111,9 @@ class AOTask:
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
+        # Track ownership — True when we created the task, False when wrapping external
+        self._owns_task = True
+
     # -- Introspection properties -------------------------------------------
 
     @property
@@ -155,7 +158,17 @@ class AOTask:
         ValueError
             If ``channel_name`` is a duplicate, the ``(device_ind, channel_ind)``
             pair is already used, or ``device_ind`` is out of range.
+        RuntimeError
+            If this task wraps an externally-provided nidaqmx.Task
+            (created via :meth:`from_task`).
         """
+        # Block channel addition for externally-provided tasks
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot add channels to an externally-provided task. "
+                "Configure channels on the nidaqmx.Task before calling from_task()."
+            )
+
         # Duplicate name detection: check what nidaqmx already knows about
         if channel_name in self.task.channel_names:
             raise ValueError(
@@ -218,6 +231,9 @@ class AOTask:
             If no channels have been added, or if the hardware driver
             coerces the sample rate to a different value than requested
             (some devices only support discrete rates).
+        RuntimeError
+            If this task wraps an externally-provided nidaqmx.Task
+            (created via :meth:`from_task`).
 
         Notes
         -----
@@ -225,6 +241,14 @@ class AOTask:
         task handle.  The task remains valid and can be reconfigured or
         closed by the caller.
         """
+        # Block start for externally-provided tasks
+        if not self._owns_task:
+            raise RuntimeError(
+                "Cannot start an externally-provided task. "
+                "Start the nidaqmx.Task directly or pass an already-started "
+                "task to from_task()."
+            )
+
         if not self.task.channel_names:
             raise ValueError(
                 "Cannot start: no channels have been added to this task. "
@@ -287,8 +311,24 @@ class AOTask:
         """Close the nidaqmx task and release hardware resources.
 
         Safe to call multiple times or when the task was never initiated.
+
+        Notes
+        -----
+        For externally-provided tasks (created via :meth:`from_task`),
+        this method does NOT close the task.  A warning is issued instead,
+        and the caller remains responsible for calling ``task.close()``.
         """
         if hasattr(self, "task") and self.task is not None:
+            # Do not close external tasks — user is responsible
+            if not self._owns_task:
+                warnings.warn(
+                    "Task was created externally — not closing. "
+                    "Call task.close() when done.",
+                    stacklevel=2,
+                )
+                return
+
+            # Close owned tasks
             try:
                 self.task.close()
             except Exception as exc:
@@ -451,6 +491,90 @@ class AOTask:
             )
 
         return task
+
+    @classmethod
+    def from_task(cls, task: nidaqmx.task.Task) -> AOTask:
+        """Wrap a pre-created nidaqmx.Task object.
+
+        This provides an escape hatch for advanced users who need to configure
+        task properties not exposed by the wrapper API.  The task must already
+        have AO channels configured.
+
+        Parameters
+        ----------
+        task : nidaqmx.task.Task
+            An existing nidaqmx Task object with AO channels configured.
+            Timing configuration and task state are preserved.
+
+        Returns
+        -------
+        AOTask
+            A wrapper instance that delegates to the provided task.
+            The wrapper does NOT own the task — cleanup is the caller's
+            responsibility.
+
+        Raises
+        ------
+        ValueError
+            If ``task.ao_channels`` is empty (no AO channels configured).
+
+        Warnings
+        --------
+        If the task is already running, a warning is issued.
+
+        Notes
+        -----
+        When wrapping an external task:
+
+        - :meth:`add_channel` is blocked and raises ``RuntimeError``
+        - :meth:`start` is blocked and raises ``RuntimeError``
+        - :meth:`clear_task` and ``__exit__`` do NOT close the task
+        - The caller remains responsible for calling ``task.close()``
+
+        Examples
+        --------
+        >>> import nidaqmx
+        >>> task = nidaqmx.Task("my_task")
+        >>> task.ao_channels.add_ao_voltage_chan("Dev1/ao0")
+        >>> wrapper = AOTask.from_task(task)
+        >>> wrapper.generate(signal_data)
+        >>> task.close()  # Caller must close
+        """
+        # Validate that the task has AO channels
+        if not task.ao_channels or len(task.ao_channels) == 0:
+            raise ValueError("Task has no AO channels.")
+
+        # Warn if task is already running
+        try:
+            # Check if task is running by accessing is_task_done()
+            # A task that hasn't started will raise or return True
+            if hasattr(task, 'is_task_done') and not task.is_task_done():
+                warnings.warn("Task is already running.", stacklevel=2)
+        except Exception:
+            # If we can't determine state, assume not running
+            pass
+
+        # Create instance without calling __init__
+        instance = object.__new__(cls)
+
+        # Populate attributes from the live task
+        instance.task = task
+        instance.task_name = task.name
+        instance.sample_rate = task.timing.samp_clk_rate
+        instance.samples_per_channel = task.timing.samp_quant_samp_per_chan
+        instance.sample_mode = task.timing.samp_quant_samp_mode
+
+        # Discover system devices (needed for potential device lookups)
+        system = nidaqmx.system.System.local()
+        instance.device_list = [dev.name for dev in system.devices]
+
+        # Empty channel configs — user configured channels externally
+        instance._channel_configs = []
+
+        # Mark as external task (not owned by this wrapper)
+        instance._owns_task = False
+
+        return instance
 
     # -- Context manager -----------------------------------------------------
 
