@@ -9,20 +9,20 @@ from .utils import (
     list_devices,
     list_tasks,
 )
-from .advanced import NIAdvanced
-from .digital import DigitalInput, DigitalOutput
-from .task_input import NITask
-from .task_output import NITaskOutput
-from .wrapper import NIDAQWrapper
+from .multi_handler import MultiHandler
+from .digital import DITask, DOTask
+from .ai_task import AITask
+from .ao_task import AOTask
+from .handler import DAQHandler
 
 __all__ = [
     "__version__",
-    "DigitalInput",
-    "DigitalOutput",
-    "NIAdvanced",
-    "NIDAQWrapper",
-    "NITask",
-    "NITaskOutput",
+    "AITask",
+    "AOTask",
+    "DAQHandler",
+    "DITask",
+    "DOTask",
+    "MultiHandler",
     "UNITS",
     "get_connected_devices",
     "get_task_by_name",

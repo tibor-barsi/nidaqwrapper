@@ -1,9 +1,9 @@
-"""Hardware integration tests for nidaqwrapper.task_input.NITask.
+"""Hardware integration tests for nidaqwrapper.ai_task.AITask.
 
 All tests in this module require real NI-DAQmx hardware and are marked with
 ``@pytest.mark.hardware``.  Run them with::
 
-    uv run pytest tests/test_hardware_task_input.py -v -m hardware
+    uv run pytest tests/test_hardware_ai_task.py -v -m hardware
 
 Or exclude them from a normal run with::
 
@@ -19,7 +19,7 @@ Hardware configuration
 Notes
 -----
 Each test uses a unique task name to prevent NI MAX collisions.  All tests
-clean up after themselves via try/finally or the NITask context manager so
+clean up after themselves via try/finally or the AITask context manager so
 that a test failure never leaves stale hardware tasks behind.
 """
 
@@ -71,7 +71,7 @@ def _delete_saved_task(task_name: str) -> None:
 
 
 class TestHardwareConstructor:
-    """Verify NITask constructor behaviour against real hardware."""
+    """Verify AITask constructor behaviour against real hardware."""
 
     def test_constructor_discovers_devices(self) -> None:
         """device_list includes cDAQ1Mod4 and device_product_type includes NI 9215.
@@ -81,9 +81,9 @@ class TestHardwareConstructor:
         expected module (cDAQ1Mod4) is visible and that its product type string
         contains '9215'.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_discover", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_discover", sample_rate=SAMPLE_RATE)
         try:
             assert DEVICE_NAME in task.device_list, (
                 f"Expected '{DEVICE_NAME}' in device_list, got: {task.device_list}"
@@ -103,10 +103,10 @@ class TestHardwareConstructor:
         returning an instance, so that the caller is never handed a task object
         that would silently shadow or corrupt the saved task.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
         with pytest.raises(ValueError, match="already"):
-            NITask("IM3", sample_rate=SAMPLE_RATE)
+            AITask("IM3", sample_rate=SAMPLE_RATE)
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +125,9 @@ class TestHardwareAddChannel:
         appears in task.channel_list and task.channels with the correct
         device_ind and channel_ind values stored.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_addch1", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_addch1", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "voltage_ai0",
@@ -147,9 +147,9 @@ class TestHardwareAddChannel:
         Confirms that channel_list length matches the number of add_channel()
         calls and that each channel is stored under its unique name.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_addch3", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_addch3", sample_rate=SAMPLE_RATE)
         try:
             for idx in range(3):
                 task.add_channel(
@@ -171,7 +171,7 @@ class TestHardwareAddChannel:
 
 
 class TestHardwareStart:
-    """Verify NITask.start() creates and starts a real nidaqmx task."""
+    """Verify AITask.start() creates and starts a real nidaqmx task."""
 
     def test_start_creates_task(self) -> None:
         """start(start_task=False) creates a nidaqmx Task without starting it.
@@ -180,9 +180,9 @@ class TestHardwareStart:
         (not None).  With start_task=False the task should not yet be running,
         so calling task.task.is_task_done() should return True (nothing started).
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_init1", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_init1", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -202,9 +202,9 @@ class TestHardwareStart:
         A running continuous-acquisition task is not done, so
         task.task.is_task_done() must return False immediately after start.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_init2", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_init2", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -228,9 +228,9 @@ class TestHardwareStart:
         ValueError if it differs from the requested rate.  This test verifies
         no exception is raised for a known-good rate.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_init3", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_init3", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -264,9 +264,9 @@ class TestHardwareAcquire:
         followed by a second sleep ensures the buffer has data for the real
         assertion.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_acq1", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_acq1", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -306,9 +306,9 @@ class TestHardwareAcquire:
         one physical channel is active — nidaqmx returns a list-of-lists for
         multi-channel tasks, and acquire_base() must convert that to 2-D.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_acq2", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_acq2", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -350,9 +350,9 @@ class TestHardwareAcquire:
         input range.  Values outside ±10 V indicate a driver or channel
         configuration problem.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
-        task = NITask("hwtask_acq3", sample_rate=SAMPLE_RATE)
+        task = AITask("hwtask_acq3", sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -397,10 +397,10 @@ class TestHardwareClearTask:
         with the same name would fail.  Success here proves the release was
         complete.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
         task_name = "hwtask_clear1"
-        first = NITask(task_name, sample_rate=SAMPLE_RATE)
+        first = AITask(task_name, sample_rate=SAMPLE_RATE)
         first.add_channel(
             "ch0",
             device_ind=DEVICE_IND,
@@ -412,7 +412,7 @@ class TestHardwareClearTask:
 
         # If the hardware handle was not released, this second construction
         # or its start() call would fail with a nidaqmx error.
-        second = NITask(task_name, sample_rate=SAMPLE_RATE)
+        second = AITask(task_name, sample_rate=SAMPLE_RATE)
         try:
             second.add_channel(
                 "ch0",
@@ -442,10 +442,10 @@ class TestHardwareSave:
         live task and the saved NI MAX entry are cleaned up.
         """
         import nidaqmx
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
         task_name = "hwtask_save1"
-        task = NITask(task_name, sample_rate=SAMPLE_RATE)
+        task = AITask(task_name, sample_rate=SAMPLE_RATE)
         try:
             task.add_channel(
                 "ch0",
@@ -484,11 +484,11 @@ class TestHardwareContextManager:
         closed) and a new task with the same name must be constructable,
         demonstrating that the hardware resource was fully returned.
         """
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
 
         task_name = "hwtask_ctx1"
 
-        with NITask(task_name, sample_rate=SAMPLE_RATE) as task:
+        with AITask(task_name, sample_rate=SAMPLE_RATE) as task:
             task.add_channel(
                 "ch0",
                 device_ind=DEVICE_IND,
@@ -504,7 +504,7 @@ class TestHardwareContextManager:
 
         # Verify the hardware resource was genuinely freed: creating a second
         # task with the same name must not raise a nidaqmx duplicate error.
-        with NITask(task_name, sample_rate=SAMPLE_RATE) as second:
+        with AITask(task_name, sample_rate=SAMPLE_RATE) as second:
             second.add_channel(
                 "ch0",
                 device_ind=DEVICE_IND,

@@ -1,4 +1,4 @@
-"""Tests for NIAdvanced — multi-task synchronized acquisition.
+"""Tests for MultiHandler — multi-task synchronized acquisition.
 
 Covers all 16 task groups from the OpenSpec change:
 1. Constructor defaults
@@ -75,7 +75,7 @@ def _make_nidaqmx_task(
 
 @pytest.fixture
 def nidaqmx_mock():
-    """Set up the module-level nidaqmx mock for import in advanced.py."""
+    """Set up the module-level nidaqmx mock for import in multi_handler.py."""
     mock_nidaqmx = MagicMock()
     mock_nidaqmx.task.Task = MagicMock
     mock_nidaqmx.constants.READ_ALL_AVAILABLE = -1
@@ -85,7 +85,7 @@ def nidaqmx_mock():
 
 @pytest.fixture
 def advanced_module(nidaqmx_mock):
-    """Import the advanced module with mocked nidaqmx dependencies.
+    """Import the multi_handler module with mocked nidaqmx dependencies.
 
     Carefully saves and restores ALL affected sys.modules entries so
     that other test files (test_utils, test_digital, etc.) are not
@@ -100,9 +100,9 @@ def advanced_module(nidaqmx_mock):
         "pyTrigger",
     ]
     _NIDAQWRAPPER_MODULES = [
-        "nidaqwrapper", "nidaqwrapper.advanced", "nidaqwrapper.wrapper",
-        "nidaqwrapper.utils", "nidaqwrapper.task_input",
-        "nidaqwrapper.task_output", "nidaqwrapper.digital",
+        "nidaqwrapper", "nidaqwrapper.multi_handler", "nidaqwrapper.handler",
+        "nidaqwrapper.utils", "nidaqwrapper.ai_task",
+        "nidaqwrapper.ao_task", "nidaqwrapper.digital",
     ]
 
     # Save current state of all modules that will be touched
@@ -123,9 +123,9 @@ def advanced_module(nidaqmx_mock):
     for mod_name in _NIDAQWRAPPER_MODULES:
         sys.modules.pop(mod_name, None)
 
-    from nidaqwrapper import advanced
+    from nidaqwrapper import multi_handler
 
-    yield advanced
+    yield multi_handler
 
     # Restore ALL modules to their pre-fixture state
     for mod_name, original in saved.items():
@@ -136,19 +136,19 @@ def advanced_module(nidaqmx_mock):
 
 
 @pytest.fixture
-def NIAdvanced(advanced_module):
-    """Return the NIAdvanced class."""
-    return advanced_module.NIAdvanced
+def MultiHandler(advanced_module):
+    """Return the MultiHandler class."""
+    return advanced_module.MultiHandler
 
 
 @pytest.fixture
-def adv(NIAdvanced):
-    """Return a fresh NIAdvanced instance."""
-    return NIAdvanced()
+def adv(MultiHandler):
+    """Return a fresh MultiHandler instance."""
+    return MultiHandler()
 
 
 # ===================================================================
-# Group 1: NIAdvanced Constructor
+# Group 1: MultiHandler Constructor
 # ===================================================================
 
 
@@ -249,12 +249,12 @@ class TestConfigureWithNidaqmxTask:
                                         assert adv.input_tasks == [mock_task]
 
 
-class TestConfigureWithNITask:
-    """Task group 2.3 — configure() with NITask objects."""
+class TestConfigureWithAITask:
+    """Task group 2.3 — configure() with AITask objects."""
 
     def test_nitask_resolved_via_start(self, adv, advanced_module):
-        """2.3 NITask objects are resolved: start() called, underlying task extracted."""
-        mock_ni_task = MagicMock(spec=advanced_module.NITask)
+        """2.3 AITask objects are resolved: start() called, underlying task extracted."""
+        mock_ni_task = MagicMock(spec=advanced_module.AITask)
         underlying = _make_nidaqmx_task("ResolvedTask")
         mock_ni_task.task = underlying
 
@@ -263,12 +263,12 @@ class TestConfigureWithNITask:
         assert result == [underlying]
 
 
-class TestConfigureWithNITaskOutput:
-    """Task group 2.4 — configure() with NITaskOutput objects."""
+class TestConfigureWithAOTask:
+    """Task group 2.4 — configure() with AOTask objects."""
 
     def test_nitaskoutput_resolved_via_start(self, adv, advanced_module):
-        """2.4 NITaskOutput objects are resolved: start() called, underlying task extracted."""
-        mock_ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
+        """2.4 AOTask objects are resolved: start() called, underlying task extracted."""
+        mock_ni_task_out = MagicMock(spec=advanced_module.AOTask)
         underlying = _make_nidaqmx_task("OutputResolvedTask")
         mock_ni_task_out.task = underlying
 
@@ -302,8 +302,8 @@ class TestConfigureMixed:
             with patch.object(advanced_module, "nidaqmx") as mock_nidaqmx:
                 mock_nidaqmx.task.Task = type(direct_task)
                 # We need to test _resolve_tasks handles multiple types
-                # Use NITask mock for one, string for another
-                ni_task_mock = MagicMock(spec=advanced_module.NITask)
+                # Use AITask mock for one, string for another
+                ni_task_mock = MagicMock(spec=advanced_module.AITask)
                 ni_task_mock.task = direct_task
                 result = adv._resolve_tasks([ni_task_mock, "MyTask"])
                 assert result == [direct_task, loaded_task]
@@ -376,8 +376,8 @@ class TestResolveTasks:
             assert result == [loaded]
 
     def test_resolve_nitask_calls_start(self, adv, advanced_module):
-        """3.2 NITask always calls start(start_task=False) to configure timing."""
-        ni_task = MagicMock(spec=advanced_module.NITask)
+        """3.2 AITask always calls start(start_task=False) to configure timing."""
+        ni_task = MagicMock(spec=advanced_module.AITask)
         underlying = _make_nidaqmx_task()
         ni_task.task = underlying  # task exists from direct-delegation __init__
 
@@ -386,8 +386,8 @@ class TestResolveTasks:
         assert result == [underlying]
 
     def test_resolve_nitaskoutput_calls_start(self, adv, advanced_module):
-        """3.3 NITaskOutput always calls start(start_task=False) to configure timing."""
-        ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
+        """3.3 AOTask always calls start(start_task=False) to configure timing."""
+        ni_task_out = MagicMock(spec=advanced_module.AOTask)
         underlying = _make_nidaqmx_task()
         ni_task_out.task = underlying  # task exists from direct-delegation __init__
 
@@ -434,13 +434,13 @@ class TestValidateTypes:
         assert adv._validate_types(["Task1", "Task2"], []) is True
 
     def test_valid_nitask_objects(self, adv, advanced_module):
-        """4.3 Valid list of NITask objects returns True."""
-        ni_task = MagicMock(spec=advanced_module.NITask)
+        """4.3 Valid list of AITask objects returns True."""
+        ni_task = MagicMock(spec=advanced_module.AITask)
         assert adv._validate_types([ni_task], []) is True
 
     def test_valid_nitaskoutput_objects(self, adv, advanced_module):
-        """4.4 Valid list of NITaskOutput objects returns True."""
-        ni_task_out = MagicMock(spec=advanced_module.NITaskOutput)
+        """4.4 Valid list of AOTask objects returns True."""
+        ni_task_out = MagicMock(spec=advanced_module.AOTask)
         assert adv._validate_types([], [ni_task_out]) is True
 
     def test_input_not_list_raises_typeerror(self, adv):

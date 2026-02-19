@@ -1,4 +1,4 @@
-"""Tests for nidaqwrapper.task_input module (NITask class).
+"""Tests for nidaqwrapper.ai_task module (AITask class).
 
 Architecture: Direct Delegation
 -------------------------------
@@ -99,9 +99,9 @@ def _make_mock_ni_task(samp_clk_rate=25600):
 
 def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
            task_names=None, task_name="test"):
-    """Construct an NITask inside a fully-patched context.
+    """Construct an AITask inside a fully-patched context.
 
-    Returns (ni_task_instance, mock_nidaqmx_task, patch_context_manager).
+    Returns (ai_task_instance, mock_nidaqmx_task, patch_context_manager).
     Use inside a ``with`` block — patches stay active so that add_channel()
     and start() can also run under mocking.
 
@@ -123,31 +123,31 @@ def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
 
     stack = ExitStack()
     stack.enter_context(
-        patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+        patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
               return_value=system)
     )
     stack.enter_context(
-        patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+        patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
               return_value=mock_ni_task)
     )
     stack.enter_context(
-        patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS)
+        patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS)
     )
     stack.enter_context(
-        patch("nidaqwrapper.task_input.constants", mock_constants)
+        patch("nidaqwrapper.ai_task.constants", mock_constants)
     )
 
-    from nidaqwrapper.task_input import NITask
-    ni_task = NITask(task_name, sample_rate=sample_rate)
+    from nidaqwrapper.ai_task import AITask
+    ni_task = AITask(task_name, sample_rate=sample_rate)
 
     return stack, ni_task, mock_ni_task
 
 
 # ===========================================================================
-# Task Group 1: NITask Constructor
+# Task Group 1: AITask Constructor
 # ===========================================================================
 
-class TestNITaskConstructor:
+class TestAITaskConstructor:
     """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
     def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
@@ -156,15 +156,15 @@ class TestNITaskConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task) as mock_cls,
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            NITask("vibration_test", sample_rate=25600)
+            from nidaqwrapper.ai_task import AITask
+            AITask("vibration_test", sample_rate=25600)
 
         mock_cls.assert_called_once_with(new_task_name="vibration_test")
 
@@ -174,15 +174,15 @@ class TestNITaskConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask("test", sample_rate=25600)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask("test", sample_rate=25600)
 
         assert task.task is mock_ni_task
 
@@ -219,14 +219,14 @@ class TestNITaskConstructor:
         system = mock_system(task_names=["existing_task"])
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(ValueError, match="already"):
-                NITask("existing_task", sample_rate=25600)
+                AITask("existing_task", sample_rate=25600)
 
     def test_no_channels_dict(self, mock_system, mock_constants):
         """The old self.channels dict no longer exists."""
@@ -241,16 +241,16 @@ class TestNITaskConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(TypeError):
-                NITask("test", sample_rate=25600, settings_file="foo.xlsx")
+                AITask("test", sample_rate=25600, settings_file="foo.xlsx")
 
 
 # ===========================================================================
@@ -458,7 +458,7 @@ class TestAddChannelVoltage:
         """Float scale creates a linear custom scale and uses FROM_CUSTOM_SCALE."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as mock_scale:
+            with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "voltage_1_scale"
                 task.add_channel(
                     "voltage_1", device_ind=0, channel_ind=0,
@@ -478,7 +478,7 @@ class TestAddChannelVoltage:
         """Tuple scale passes both slope and y_intercept."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as mock_scale:
+            with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "voltage_1_scale"
                 task.add_channel(
                     "voltage_1", device_ind=0, channel_ind=0,
@@ -493,7 +493,7 @@ class TestAddChannelVoltage:
         """Channel with scale always uses add_ai_voltage_chan regardless of units."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as mock_scale:
+            with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "ch_scale"
                 task.add_channel(
                     "ch", device_ind=0, channel_ind=0,
@@ -620,7 +620,7 @@ class TestChannelValidation:
         """Multiple channels of different types can be added to one task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as mock_scale:
+            with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "v_scale"
                 task.add_channel(
                     "accel_x", device_ind=0, channel_ind=0,
@@ -1003,10 +1003,10 @@ class TestSave:
 # ===========================================================================
 
 class TestContextManager:
-    """NITask __enter__/__exit__ (context manager protocol)."""
+    """AITask __enter__/__exit__ (context manager protocol)."""
 
     def test_enter_returns_self(self, mock_system, mock_constants):
-        """__enter__ returns the NITask instance."""
+        """__enter__ returns the AITask instance."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -1069,7 +1069,7 @@ class TestInitiateRemoved:
     """initiate() method no longer exists."""
 
     def test_no_initiate_method(self, mock_system, mock_constants):
-        """initiate() method does not exist on NITask."""
+        """initiate() method does not exist on AITask."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -1259,7 +1259,7 @@ class TestSaveConfig:
         """Channel with custom scale saves scale value in TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as ms:
+            with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as ms:
                 ms.return_value.name = "v1_scale"
                 task.add_channel(
                     "v1", device_ind=0, channel_ind=0,
@@ -1294,7 +1294,7 @@ class TestSaveConfig:
 
 
 class TestFromConfig:
-    """from_config() creates an NITask from a TOML file."""
+    """from_config() creates an AITask from a TOML file."""
 
     def _write_config(self, tmp_path, content):
         """Write a TOML string to a temp file and return the path."""
@@ -1325,15 +1325,15 @@ units = "g"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task) as mock_cls,
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         mock_cls.assert_called_once_with(new_task_name="vibration_test")
         assert task.sample_rate == 25600
@@ -1361,15 +1361,15 @@ units = "g"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         # cDAQ1Mod2 is device_ind=1, so physical channel should be cDAQ1Mod2/ai0
         kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
@@ -1407,15 +1407,15 @@ units = "g"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         assert mock_ni_task.ai_channels.add_ai_accel_chan.call_count == 2
         calls = mock_ni_task.ai_channels.add_ai_accel_chan.call_args_list
@@ -1446,15 +1446,15 @@ units = "N"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         mock_ni_task.ai_channels.add_ai_force_iepe_chan.assert_called_once()
         kwargs = mock_ni_task.ai_channels.add_ai_force_iepe_chan.call_args.kwargs
@@ -1485,15 +1485,15 @@ max_val = 50.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
         assert kwargs["min_val"] == 0.0
@@ -1520,15 +1520,15 @@ units = "V"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         mock_ni_task.ai_channels.add_ai_voltage_chan.assert_called_once()
 
@@ -1554,17 +1554,17 @@ scale = [2500.0, -100.0]
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
-            patch("nidaqwrapper.task_input.nidaqmx.Scale.create_lin_scale") as ms,
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as ms,
         ):
             ms.return_value.name = "v1_scale"
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         ms.assert_called_once()
         scale_kwargs = ms.call_args.kwargs
@@ -1596,15 +1596,15 @@ max_val = 50.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            task = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_config(path)
 
         kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
         assert kwargs["min_val"] == -50.0
@@ -1633,16 +1633,16 @@ units = "g"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(ValueError, match="alias|device"):
-                NITask.from_config(path)
+                AITask.from_config(path)
 
     def test_device_not_in_system_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when device name not found in system."""
@@ -1667,16 +1667,16 @@ units = "g"
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(ValueError, match="device|not found"):
-                NITask.from_config(path)
+                AITask.from_config(path)
 
     def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [task] section is missing."""
@@ -1693,14 +1693,14 @@ units = "g"
         system = mock_system(task_names=[])
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(ValueError, match="task"):
-                NITask.from_config(path)
+                AITask.from_config(path)
 
     def test_missing_devices_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [devices] section is missing."""
@@ -1719,22 +1719,22 @@ units = "g"
         system = mock_system(task_names=[])
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
+            from nidaqwrapper.ai_task import AITask
             with pytest.raises(ValueError, match="devices"):
-                NITask.from_config(path)
+                AITask.from_config(path)
 
     def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises an error on syntactically invalid TOML."""
         path = self._write_config(tmp_path, "not = valid [ toml {\n")
 
-        from nidaqwrapper.task_input import NITask
+        from nidaqwrapper.ai_task import AITask
         with pytest.raises(Exception):  # tomllib.TOMLDecodeError
-            NITask.from_config(path)
+            AITask.from_config(path)
 
 
 class TestConfigRoundtrip:
@@ -1759,15 +1759,15 @@ class TestConfigRoundtrip:
         mock_ni_task2 = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_input.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_input.nidaqmx.task.Task",
+            patch("nidaqwrapper.ai_task.nidaqmx.task.Task",
                   return_value=mock_ni_task2) as mock_cls,
-            patch("nidaqwrapper.task_input.UNITS", MOCK_UNITS),
-            patch("nidaqwrapper.task_input.constants", mock_constants),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_input import NITask
-            loaded = NITask.from_config(path)
+            from nidaqwrapper.ai_task import AITask
+            loaded = AITask.from_config(path)
 
         # Verify the loaded task matches the original
         mock_cls.assert_called_once_with(new_task_name="test")

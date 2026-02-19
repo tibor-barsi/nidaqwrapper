@@ -1,6 +1,6 @@
 """Analog input task configuration for NI-DAQmx devices.
 
-Provides the ``NITask`` class for programmatic creation and management
+Provides the ``AITask`` class for programmatic creation and management
 of analog input acquisition tasks.  Supports accelerometer (IEPE),
 force (IEPE), and voltage channels with optional linear custom scales.
 
@@ -36,7 +36,7 @@ except ImportError:
     _NIDAQMX_AVAILABLE = False
 
 
-class NITask:
+class AITask:
     """Programmatic analog input task for NI-DAQmx devices.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -61,7 +61,7 @@ class NITask:
 
     Examples
     --------
-    >>> task = NITask("vibration_test", sample_rate=25600)
+    >>> task = AITask("vibration_test", sample_rate=25600)
     >>> task.add_channel("accel_x", device_ind=0, channel_ind=0,
     ...                  sensitivity=100.0, sensitivity_units="mV/g",
     ...                  units="g")
@@ -510,8 +510,8 @@ class NITask:
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
 
     @classmethod
-    def from_config(cls, path: str | pathlib.Path) -> NITask:
-        """Create an :class:`NITask` from a TOML configuration file.
+    def from_config(cls, path: str | pathlib.Path) -> AITask:
+        """Create an :class:`AITask` from a TOML configuration file.
 
         Reads the TOML file produced by :meth:`save_config`, constructs
         a new task, and calls :meth:`add_channel` for every ``[[channels]]``
@@ -524,7 +524,7 @@ class NITask:
 
         Returns
         -------
-        NITask
+        AITask
             A fully configured task (channels added, not yet started).
 
         Raises
@@ -538,7 +538,7 @@ class NITask:
 
         Examples
         --------
-        >>> task = NITask.from_config("/tmp/vibration.toml")
+        >>> task = AITask.from_config("/tmp/vibration.toml")
         >>> task.start()
         """
         try:
@@ -607,7 +607,7 @@ class NITask:
 
         return task
 
-    def __enter__(self) -> NITask:
+    def __enter__(self) -> AITask:
         """Enter the runtime context; return ``self``."""
         return self
 

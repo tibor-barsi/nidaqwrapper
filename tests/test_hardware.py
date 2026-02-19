@@ -144,12 +144,12 @@ class TestDeviceDiscovery:
 
 
 # ===========================================================================
-# Task Group 4: NITask Voltage Channel Acquisition Tests
+# Task Group 4: AITask Voltage Channel Acquisition Tests
 # ===========================================================================
 
 
-class TestNITaskHardware:
-    """Validate NITask voltage acquisition against real NI 9215."""
+class TestAITaskHardware:
+    """Validate AITask voltage acquisition against real NI 9215."""
 
     def test_nitask_voltage_channel_acquisition(self) -> None:
         """Create a voltage channel, start, acquire, verify data shape.
@@ -157,9 +157,9 @@ class TestNITaskHardware:
         Uses the priming read pattern: first read(-1) may return 0 samples,
         so we discard it, sleep, and assert on the second read.
         """
-        from nidaqwrapper import NITask
+        from nidaqwrapper import AITask
 
-        task = NITask("hw_acq_voltage", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_acq_voltage", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             task.start(start_task=True)
@@ -184,9 +184,9 @@ class TestNITaskHardware:
 
         Acquires for 0.5s at 25600 Hz. Expected ~12800 samples.
         """
-        from nidaqwrapper import NITask
+        from nidaqwrapper import AITask
 
-        task = NITask("hw_rate_check", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_rate_check", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             task.start(start_task=True)
@@ -209,12 +209,12 @@ class TestNITaskHardware:
         finally:
             task.clear_task()
 
-    def test_nitask_context_manager(self) -> None:
-        """NITask context manager cleans up properly."""
-        from nidaqwrapper import NITask
+    def test_aitask_context_manager(self) -> None:
+        """AITask context manager cleans up properly."""
+        from nidaqwrapper import AITask
 
         task_name = "hw_ctx_nitask"
-        with NITask(task_name, sample_rate=AI_SAMPLE_RATE) as task:
+        with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             task.start(start_task=True)
 
@@ -228,27 +228,27 @@ class TestNITaskHardware:
         assert task.task is None
 
         # Can re-create with same name (proves cleanup)
-        with NITask(task_name, sample_rate=AI_SAMPLE_RATE) as task2:
+        with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task2:
             task2.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             task2.start(start_task=False)
 
 
 # ===========================================================================
-# Task Group 5: NITaskOutput AO Generation Tests
+# Task Group 5: AOTask AO Generation Tests
 # ===========================================================================
 
 
-class TestNITaskOutputHardware:
-    """Validate NITaskOutput analog output against real NI 9260."""
+class TestAOTaskHardware:
+    """Validate AOTask analog output against real NI 9260."""
 
     def test_nitaskoutput_ao_generation(self) -> None:
         """Create AO channel, start, generate sine wave, clear task."""
         if AO_DEVICE_NAME is None:
             pytest.skip("No AO device available")
 
-        from nidaqwrapper import NITaskOutput
+        from nidaqwrapper import AOTask
 
-        task = NITaskOutput("hw_ao_gen", sample_rate=AO_SAMPLE_RATE)
+        task = AOTask("hw_ao_gen", sample_rate=AO_SAMPLE_RATE)
         try:
             task.add_channel(
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
@@ -267,14 +267,14 @@ class TestNITaskOutputHardware:
             task.clear_task()
 
     def test_nitaskoutput_context_manager(self) -> None:
-        """NITaskOutput context manager cleans up properly."""
+        """AOTask context manager cleans up properly."""
         if AO_DEVICE_NAME is None:
             pytest.skip("No AO device available")
 
-        from nidaqwrapper import NITaskOutput
+        from nidaqwrapper import AOTask
 
         task_name = "hw_ctx_ao"
-        with NITaskOutput(task_name, sample_rate=AO_SAMPLE_RATE) as task:
+        with AOTask(task_name, sample_rate=AO_SAMPLE_RATE) as task:
             task.add_channel(
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
@@ -290,12 +290,12 @@ class TestNITaskOutputHardware:
 
 
 # ===========================================================================
-# Task Group 6: NIDAQWrapper NI MAX Task Test
+# Task Group 6: DAQHandler NI MAX Task Test
 # ===========================================================================
 
 
 class TestWrapperNIMaxTask:
-    """Validate NIDAQWrapper with a pre-existing NI MAX task."""
+    """Validate DAQHandler with a pre-existing NI MAX task."""
 
     def test_wrapper_ni_max_task(self) -> None:
         """Configure, connect, introspect, and disconnect with NI MAX task.
@@ -305,9 +305,9 @@ class TestWrapperNIMaxTask:
         if NI_MAX_TASK_NAME is None:
             pytest.skip("No NI MAX task available")
 
-        from nidaqwrapper import NIDAQWrapper
+        from nidaqwrapper import DAQHandler
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         try:
             wrapper.configure(task_in=NI_MAX_TASK_NAME)
             result = wrapper.connect()
@@ -324,26 +324,26 @@ class TestWrapperNIMaxTask:
 
 
 # ===========================================================================
-# Task Group 7: NIDAQWrapper Programmatic Task Test
+# Task Group 7: DAQHandler Programmatic Task Test
 # ===========================================================================
 
 
 class TestWrapperProgrammatic:
-    """Validate NIDAQWrapper full lifecycle with programmatic NITask."""
+    """Validate DAQHandler full lifecycle with programmatic AITask."""
 
     def test_wrapper_programmatic_full_lifecycle(self) -> None:
         """Configure, connect, set trigger, acquire, disconnect.
 
         Uses a very low trigger level so noise triggers it quickly.
         """
-        from nidaqwrapper import NIDAQWrapper, NITask
+        from nidaqwrapper import DAQHandler, AITask
 
         n_samples = 5000
 
-        task = NITask("hw_wrap_prog", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_wrap_prog", sample_rate=AI_SAMPLE_RATE)
         task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         try:
             wrapper.configure(task_in=task)
             result = wrapper.connect()
@@ -372,12 +372,12 @@ class TestWrapperProgrammatic:
 
     def test_wrapper_read_all_available(self) -> None:
         """read_all_available() returns (n_samples, n_channels) data."""
-        from nidaqwrapper import NIDAQWrapper, NITask
+        from nidaqwrapper import DAQHandler, AITask
 
-        task = NITask("hw_wrap_raa", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_wrap_raa", sample_rate=AI_SAMPLE_RATE)
         task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         try:
             wrapper.configure(task_in=task)
             wrapper.connect()
@@ -415,12 +415,12 @@ class TestSingleSample:
 
     def test_single_sample_read(self) -> None:
         """read() returns (n_channels,) array with reasonable voltages."""
-        from nidaqwrapper import NIDAQWrapper, NITask
+        from nidaqwrapper import DAQHandler, AITask
 
-        task = NITask("hw_ss_read", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_ss_read", sample_rate=AI_SAMPLE_RATE)
         task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         try:
             wrapper.configure(task_in=task)
             wrapper.connect()
@@ -443,15 +443,15 @@ class TestSingleSample:
         if AO_DEVICE_NAME is None:
             pytest.skip("No AO device available")
 
-        from nidaqwrapper import NIDAQWrapper, NITaskOutput
+        from nidaqwrapper import DAQHandler, AOTask
 
-        task_out = NITaskOutput("hw_ss_write", sample_rate=AO_SAMPLE_RATE)
+        task_out = AOTask("hw_ss_write", sample_rate=AO_SAMPLE_RATE)
         task_out.add_channel(
             "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
             min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
         )
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         try:
             wrapper.configure(task_out=task_out)
             wrapper.connect()
@@ -470,23 +470,23 @@ class TestSingleSample:
 
 
 class TestWrapperContextManager:
-    """Validate NIDAQWrapper context manager releases hardware resources."""
+    """Validate DAQHandler context manager releases hardware resources."""
 
     def test_context_manager_normal_exit(self) -> None:
         """Resources released on normal with-block exit."""
-        from nidaqwrapper import NIDAQWrapper, NITask
+        from nidaqwrapper import DAQHandler, AITask
 
         task_name = "hw_ctx_norm"
 
-        with NIDAQWrapper() as wrapper:
-            task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
+        with DAQHandler() as wrapper:
+            task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             wrapper.configure(task_in=task)
             wrapper.connect()
 
         # After context exit, should be disconnected
         # Verify resources released: can create a new task with the same name
-        new_task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
+        new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             new_task.start(start_task=False)
@@ -495,20 +495,20 @@ class TestWrapperContextManager:
 
     def test_context_manager_exception_cleanup(self) -> None:
         """Resources released even when exception occurs in with-block."""
-        from nidaqwrapper import NIDAQWrapper, NITask
+        from nidaqwrapper import DAQHandler, AITask
 
         task_name = "hw_ctx_exc"
 
         with pytest.raises(RuntimeError, match="deliberate"):
-            with NIDAQWrapper() as wrapper:
-                task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
+            with DAQHandler() as wrapper:
+                task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
                 task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
                 wrapper.configure(task_in=task)
                 wrapper.connect()
                 raise RuntimeError("deliberate test exception")
 
         # After exception, resources should still be released
-        new_task = NITask(task_name, sample_rate=AI_SAMPLE_RATE)
+        new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             new_task.start(start_task=False)
@@ -522,20 +522,20 @@ class TestWrapperContextManager:
 
 
 class TestDigitalIO:
-    """Validate standalone DigitalInput/DigitalOutput on PCIe-6320.
+    """Validate standalone DITask/DOTask on PCIe-6320.
 
     Note: wrapper digital integration (read_digital/write_digital) is
     skipped — depends on Phase 6b (digital-wrapper-integration).
     """
 
     def test_digital_input_read(self) -> None:
-        """DigitalInput reads a boolean value from Dev1 DI line."""
+        """DITask reads a boolean value from Dev1 DI line."""
         if DI_LINES is None:
             pytest.skip("No digital input hardware available")
 
-        from nidaqwrapper import DigitalInput
+        from nidaqwrapper import DITask
 
-        di = DigitalInput("hw_di_read")
+        di = DITask("hw_di_read")
         try:
             di.add_channel("di_ch", lines=DI_LINES)
             di.start()
@@ -550,13 +550,13 @@ class TestDigitalIO:
             di.clear_task()
 
     def test_digital_output_write(self) -> None:
-        """DigitalOutput writes True/False to Dev1 DO line without error."""
+        """DOTask writes True/False to Dev1 DO line without error."""
         if DO_LINES is None:
             pytest.skip("No digital output hardware available")
 
-        from nidaqwrapper import DigitalOutput
+        from nidaqwrapper import DOTask
 
-        do = DigitalOutput("hw_do_write")
+        do = DOTask("hw_do_write")
         try:
             do.add_channel("do_ch", lines=DO_LINES)
             do.start()
@@ -571,10 +571,10 @@ class TestDigitalIO:
         if DI_LINES is None:
             pytest.skip("No digital input hardware available")
 
-        from nidaqwrapper import DigitalInput
+        from nidaqwrapper import DITask
 
         task_name = "hw_di_ctx"
-        with DigitalInput(task_name) as di:
+        with DITask(task_name) as di:
             di.add_channel("di_ch", lines=DI_LINES)
             di.start()
             data = di.read()
@@ -583,7 +583,7 @@ class TestDigitalIO:
         assert di.task is None
 
     def test_wrapper_digital_integration(self) -> None:
-        """NIDAQWrapper.read_digital() and write_digital() work with real hardware.
+        """DAQHandler.read_digital() and write_digital() work with real hardware.
 
         Configures a wrapper with digital input (Dev1 port0/line0) and digital
         output (Dev1 port1/line0), connects, writes True/False, reads, and
@@ -592,15 +592,15 @@ class TestDigitalIO:
         if DI_LINES is None or DO_LINES is None:
             pytest.skip("Both DI and DO hardware required for wrapper digital test")
 
-        from nidaqwrapper import DigitalInput, DigitalOutput, NIDAQWrapper
+        from nidaqwrapper import DITask, DOTask, DAQHandler
 
-        di = DigitalInput("hw_wrap_di")
+        di = DITask("hw_wrap_di")
         di.add_channel("di_ch", lines=DI_LINES)
 
-        do = DigitalOutput("hw_wrap_do")
+        do = DOTask("hw_wrap_do")
         do.add_channel("do_ch", lines=DO_LINES)
 
-        wrapper = NIDAQWrapper()
+        wrapper = DAQHandler()
         wrapper.configure(task_digital_in=di, task_digital_out=do)
 
         try:
@@ -620,29 +620,29 @@ class TestDigitalIO:
 
 
 # ===========================================================================
-# Task Group 11: NIAdvanced Multi-Task Test
+# Task Group 11: MultiHandler Multi-Task Test
 # ===========================================================================
 
 
-class TestNIAdvancedHardware:
-    """Validate NIAdvanced on real hardware.
+class TestMultiHandlerHardware:
+    """Validate MultiHandler on real hardware.
 
     Tests both single-task software trigger and (if 2+ modules are available)
     multi-task hardware trigger modes.
     """
 
-    def test_niadvanced_single_task_software_trigger(self) -> None:
-        """NIAdvanced with a single input task and software trigger."""
-        from nidaqwrapper import NIAdvanced, NITask
+    def test_multihandler_single_task_software_trigger(self) -> None:
+        """MultiHandler with a single input task and software trigger."""
+        from nidaqwrapper import MultiHandler, AITask
 
         n_samples = 5000
 
-        task = NITask("hw_adv_st", sample_rate=AI_SAMPLE_RATE)
+        task = AITask("hw_adv_st", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
             task.start(start_task=False)
 
-            adv = NIAdvanced()
+            adv = MultiHandler()
             try:
                 result = adv.configure(input_tasks=[task.task])
                 assert result is True, "configure() should return True"

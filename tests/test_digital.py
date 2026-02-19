@@ -1,4 +1,4 @@
-"""Tests for nidaqwrapper.digital module (DigitalInput and DigitalOutput).
+"""Tests for nidaqwrapper.digital module (DITask and DOTask).
 
 Architecture: Direct Delegation
 --------------------------------
@@ -85,9 +85,9 @@ def _build_di(
     sample_rate: float | None = None,
     task_names: list[str] | None = None,
 ) -> tuple[ExitStack, object, MagicMock]:
-    """Construct a DigitalInput inside a fully-patched context.
+    """Construct a DITask inside a fully-patched context.
 
-    Returns (exit_stack, digital_input_instance, mock_nidaqmx_task).
+    Returns (exit_stack, di_task_instance, mock_nidaqmx_task).
     Use inside a ``with`` block — patches stay active so that add_channel()
     and start() can also run under mocking.
 
@@ -130,9 +130,9 @@ def _build_di(
         )
     )
 
-    from nidaqwrapper.digital import DigitalInput
+    from nidaqwrapper.digital import DITask
 
-    di = DigitalInput(task_name, sample_rate=sample_rate)
+    di = DITask(task_name, sample_rate=sample_rate)
     return stack, di, mock_ni_task
 
 
@@ -143,10 +143,10 @@ def _build_do(
     sample_rate: float | None = None,
     task_names: list[str] | None = None,
 ) -> tuple[ExitStack, object, MagicMock]:
-    """Construct a DigitalOutput inside a fully-patched context.
+    """Construct a DOTask inside a fully-patched context.
 
-    Returns (exit_stack, digital_output_instance, mock_nidaqmx_task).
-    Use inside a ``with`` block. Mirrors _build_di() for DigitalOutput.
+    Returns (exit_stack, do_task_instance, mock_nidaqmx_task).
+    Use inside a ``with`` block. Mirrors _build_di() for DOTask.
 
     Example::
 
@@ -183,18 +183,18 @@ def _build_do(
         )
     )
 
-    from nidaqwrapper.digital import DigitalOutput
+    from nidaqwrapper.digital import DOTask
 
-    do = DigitalOutput(task_name, sample_rate=sample_rate)
+    do = DOTask(task_name, sample_rate=sample_rate)
     return stack, do, mock_ni_task
 
 
 # ===========================================================================
-# DigitalInput Tests
+# DITask Tests
 # ===========================================================================
 
 
-class TestDigitalInputConstructor:
+class TestDITaskConstructor:
     """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
     def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
@@ -213,9 +213,9 @@ class TestDigitalInputConstructor:
             ) as mock_cls,
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            DigitalInput("switches", sample_rate=None)
+            DITask("switches", sample_rate=None)
 
         mock_cls.assert_called_once_with(new_task_name="switches")
 
@@ -267,10 +267,10 @@ class TestDigitalInputConstructor:
             ),
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
             with pytest.raises(ValueError, match="existing_di"):
-                DigitalInput("existing_di")
+                DITask("existing_di")
 
     def test_no_channels_dict(self, mock_system, mock_constants):
         """The old self.channels dict no longer exists in the new architecture."""
@@ -280,7 +280,7 @@ class TestDigitalInputConstructor:
         assert not hasattr(di, "channels")
 
 
-class TestDigitalInputAddChannel:
+class TestDITaskAddChannel:
     """add_channel() delegates directly to nidaqmx di_channels.add_di_chan()."""
 
     def test_delegates_to_di_channels(self, mock_system, mock_constants):
@@ -338,9 +338,9 @@ class TestDigitalInputAddChannel:
                 return_value="Dev1/port0/line0:7",
             ) as mock_expand,
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di = DigitalInput("test_expand")
+            di = DITask("test_expand")
             di.add_channel("port0", lines="Dev1/port0")
 
         mock_expand.assert_called_once_with("Dev1/port0")
@@ -368,9 +368,9 @@ class TestDigitalInputAddChannel:
                 side_effect=lambda lines: lines,
             ) as mock_expand,
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di = DigitalInput("test_noexpand")
+            di = DITask("test_noexpand")
             di.add_channel("btn", lines="Dev1/port0/line0:3")
 
         # Expansion function was called — it's called for all specs, but returns
@@ -414,7 +414,7 @@ class TestDigitalInputAddChannel:
         assert len(di._channel_configs) == 2
 
 
-class TestDigitalInputStart:
+class TestDITaskStart:
     """start() replaces initiate() — configures timing and optionally starts task."""
 
     def test_clocked_configures_timing(self, mock_system, mock_constants):
@@ -483,7 +483,7 @@ class TestDigitalInputStart:
                 di.start()
 
 
-class TestDigitalInputGetters:
+class TestDITaskGetters:
     """Getters delegate to the nidaqmx task properties."""
 
     def test_channel_list(self, mock_system, mock_constants):
@@ -512,7 +512,7 @@ class TestDigitalInputGetters:
             assert di.channel_list == []
 
 
-class TestDigitalInputRead:
+class TestDITaskRead:
     """read() performs on-demand single-sample reads."""
 
     def test_read_single_line_bool(self, mock_system, mock_constants):
@@ -550,7 +550,7 @@ class TestDigitalInputRead:
         assert isinstance(data, np.ndarray)
 
 
-class TestDigitalInputReadAllAvailable:
+class TestDITaskReadAllAvailable:
     """read_all_available() reads buffered data in clocked mode."""
 
     def test_returns_n_samples_n_lines(self, mock_system, mock_constants):
@@ -613,7 +613,7 @@ class TestDigitalInputReadAllAvailable:
         assert data.shape == (3, 1)
 
 
-class TestDigitalInputClearTask:
+class TestDITaskClearTask:
     """clear_task() releases hardware resources safely."""
 
     def test_closes_task(self, mock_system, mock_constants):
@@ -659,11 +659,11 @@ class TestDigitalInputClearTask:
         assert di.task is None
 
 
-class TestDigitalInputContextManager:
-    """DigitalInput implements the context manager protocol."""
+class TestDITaskContextManager:
+    """DITask implements the context manager protocol."""
 
     def test_enter_returns_self(self, mock_system, mock_constants):
-        """__enter__ returns the DigitalInput instance."""
+        """__enter__ returns the DITask instance."""
         ctx, di, _ = _build_di(mock_system, mock_constants)
         with ctx:
             pass
@@ -703,11 +703,11 @@ class TestDigitalInputContextManager:
         assert cleared
 
 
-class TestDigitalInputInitiateRemoved:
+class TestDITaskInitiateRemoved:
     """initiate() and old internal methods must not exist in the new architecture."""
 
     def test_no_initiate_method(self, mock_system, mock_constants):
-        """initiate() method does not exist on DigitalInput."""
+        """initiate() method does not exist on DITask."""
         ctx, di, _ = _build_di(mock_system, mock_constants)
         with ctx:
             pass
@@ -728,8 +728,8 @@ class TestDigitalInputInitiateRemoved:
         assert not hasattr(di, "_create_task")
 
 
-class TestDigitalInputSaveConfig:
-    """save_config() serialises DigitalInput configuration to TOML."""
+class TestDITaskSaveConfig:
+    """save_config() serialises DITask configuration to TOML."""
 
     def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
         """save_config() creates a valid TOML file."""
@@ -840,8 +840,8 @@ class TestDigitalInputSaveConfig:
         assert names == {"btn_group", "sensors"}
 
 
-class TestDigitalInputFromConfig:
-    """from_config() creates a DigitalInput from a TOML file."""
+class TestDITaskFromConfig:
+    """from_config() creates a DITask from a TOML file."""
 
     def _write_config(self, tmp_path, content: str):
         """Write a TOML string to a temporary file and return the path."""
@@ -850,7 +850,7 @@ class TestDigitalInputFromConfig:
         return path
 
     def test_creates_task_from_toml(self, mock_system, mock_constants, tmp_path):
-        """from_config() creates a DigitalInput with the name from [task]."""
+        """from_config() creates a DITask with the name from [task]."""
         path = self._write_config(
             tmp_path,
             """\
@@ -881,9 +881,9 @@ lines = "Dev1/port0/line0:3"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di = DigitalInput.from_config(path)
+            di = DITask.from_config(path)
 
         mock_cls.assert_called_once_with(new_task_name="switches")
         assert di.task_name == "switches"
@@ -924,9 +924,9 @@ lines = "Dev1/port1/line0:7"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            DigitalInput.from_config(path)
+            DITask.from_config(path)
 
         assert mock_ni_task.di_channels.add_di_chan.call_count == 2
 
@@ -963,9 +963,9 @@ lines = "Dev1/port0/line0"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di = DigitalInput.from_config(path)
+            di = DITask.from_config(path)
 
         assert di.mode == "clocked"
         assert di.sample_rate == 2000
@@ -989,22 +989,22 @@ lines = "Dev1/port0/line0"
             ),
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
             with pytest.raises(ValueError, match="task"):
-                DigitalInput.from_config(path)
+                DITask.from_config(path)
 
     def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises an error on syntactically invalid TOML."""
         path = self._write_config(tmp_path, "not = valid [ toml {\n")
 
-        from nidaqwrapper.digital import DigitalInput
+        from nidaqwrapper.digital import DITask
 
         with pytest.raises(Exception):  # tomllib.TOMLDecodeError
-            DigitalInput.from_config(path)
+            DITask.from_config(path)
 
 
-class TestDigitalInputConfigRoundtrip:
+class TestDITaskConfigRoundtrip:
     """save_config() + from_config() round-trip preserves task configuration."""
 
     def test_roundtrip_on_demand(self, mock_system, mock_constants, tmp_path):
@@ -1036,9 +1036,9 @@ class TestDigitalInputConfigRoundtrip:
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di2 = DigitalInput.from_config(path)
+            di2 = DITask.from_config(path)
 
         assert di2.task_name == "roundtrip_di"
         assert di2.sample_rate is None
@@ -1076,9 +1076,9 @@ class TestDigitalInputConfigRoundtrip:
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalInput
+            from nidaqwrapper.digital import DITask
 
-            di2 = DigitalInput.from_config(path)
+            di2 = DITask.from_config(path)
 
         assert di2.task_name == "fast_di"
         assert di2.sample_rate == 5000
@@ -1086,11 +1086,11 @@ class TestDigitalInputConfigRoundtrip:
 
 
 # ===========================================================================
-# DigitalOutput Tests
+# DOTask Tests
 # ===========================================================================
 
 
-class TestDigitalOutputConstructor:
+class TestDOTaskConstructor:
     """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
     def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
@@ -1109,9 +1109,9 @@ class TestDigitalOutputConstructor:
             ) as mock_cls,
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            DigitalOutput("leds", sample_rate=None)
+            DOTask("leds", sample_rate=None)
 
         mock_cls.assert_called_once_with(new_task_name="leds")
 
@@ -1162,10 +1162,10 @@ class TestDigitalOutputConstructor:
             ),
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
             with pytest.raises(ValueError, match="existing_do"):
-                DigitalOutput("existing_do")
+                DOTask("existing_do")
 
     def test_no_channels_dict(self, mock_system, mock_constants):
         """The old self.channels dict no longer exists in the new architecture."""
@@ -1175,7 +1175,7 @@ class TestDigitalOutputConstructor:
         assert not hasattr(do, "channels")
 
 
-class TestDigitalOutputAddChannel:
+class TestDOTaskAddChannel:
     """add_channel() delegates directly to nidaqmx do_channels.add_do_chan()."""
 
     def test_delegates_to_do_channels(self, mock_system, mock_constants):
@@ -1233,9 +1233,9 @@ class TestDigitalOutputAddChannel:
                 return_value="Dev1/port1/line0:7",
             ) as mock_expand,
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            do = DigitalOutput("test_expand")
+            do = DOTask("test_expand")
             do.add_channel("port1", lines="Dev1/port1")
 
         mock_expand.assert_called_once_with("Dev1/port1")
@@ -1279,7 +1279,7 @@ class TestDigitalOutputAddChannel:
         assert len(do._channel_configs) == 2
 
 
-class TestDigitalOutputStart:
+class TestDOTaskStart:
     """start() replaces initiate() — configures timing and optionally starts task."""
 
     def test_clocked_configures_timing(self, mock_system, mock_constants):
@@ -1348,7 +1348,7 @@ class TestDigitalOutputStart:
                 do.start()
 
 
-class TestDigitalOutputGetters:
+class TestDOTaskGetters:
     """Getters delegate to the nidaqmx task properties."""
 
     def test_channel_list(self, mock_system, mock_constants):
@@ -1377,7 +1377,7 @@ class TestDigitalOutputGetters:
             assert do.channel_list == []
 
 
-class TestDigitalOutputWrite:
+class TestDOTaskWrite:
     """write() performs on-demand single-sample writes."""
 
     def test_write_single_bool(self, mock_system, mock_constants):
@@ -1426,7 +1426,7 @@ class TestDigitalOutputWrite:
         mt.write.assert_called_once()
 
 
-class TestDigitalOutputWriteContinuous:
+class TestDOTaskWriteContinuous:
     """write_continuous() writes buffered data in clocked mode."""
 
     def test_multi_line_2d_transposed(self, mock_system, mock_constants):
@@ -1476,7 +1476,7 @@ class TestDigitalOutputWriteContinuous:
         assert call_args.kwargs["auto_start"] is True
 
 
-class TestDigitalOutputClearTask:
+class TestDOTaskClearTask:
     """clear_task() releases hardware resources safely."""
 
     def test_closes_task(self, mock_system, mock_constants):
@@ -1522,11 +1522,11 @@ class TestDigitalOutputClearTask:
         assert do.task is None
 
 
-class TestDigitalOutputContextManager:
-    """DigitalOutput implements the context manager protocol."""
+class TestDOTaskContextManager:
+    """DOTask implements the context manager protocol."""
 
     def test_enter_returns_self(self, mock_system, mock_constants):
-        """__enter__ returns the DigitalOutput instance."""
+        """__enter__ returns the DOTask instance."""
         ctx, do, _ = _build_do(mock_system, mock_constants)
         with ctx:
             pass
@@ -1566,11 +1566,11 @@ class TestDigitalOutputContextManager:
         assert cleared
 
 
-class TestDigitalOutputInitiateRemoved:
+class TestDOTaskInitiateRemoved:
     """initiate() and old internal methods must not exist in the new architecture."""
 
     def test_no_initiate_method(self, mock_system, mock_constants):
-        """initiate() method does not exist on DigitalOutput."""
+        """initiate() method does not exist on DOTask."""
         ctx, do, _ = _build_do(mock_system, mock_constants)
         with ctx:
             pass
@@ -1591,8 +1591,8 @@ class TestDigitalOutputInitiateRemoved:
         assert not hasattr(do, "_create_task")
 
 
-class TestDigitalOutputSaveConfig:
-    """save_config() serialises DigitalOutput configuration to TOML."""
+class TestDOTaskSaveConfig:
+    """save_config() serialises DOTask configuration to TOML."""
 
     def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
         """save_config() creates a valid TOML file."""
@@ -1699,8 +1699,8 @@ class TestDigitalOutputSaveConfig:
         assert names == {"leds", "relays"}
 
 
-class TestDigitalOutputFromConfig:
-    """from_config() creates a DigitalOutput from a TOML file."""
+class TestDOTaskFromConfig:
+    """from_config() creates a DOTask from a TOML file."""
 
     def _write_config(self, tmp_path, content: str):
         """Write a TOML string to a temporary file and return the path."""
@@ -1709,7 +1709,7 @@ class TestDigitalOutputFromConfig:
         return path
 
     def test_creates_task_from_toml(self, mock_system, mock_constants, tmp_path):
-        """from_config() creates a DigitalOutput with the name from [task]."""
+        """from_config() creates a DOTask with the name from [task]."""
         path = self._write_config(
             tmp_path,
             """\
@@ -1740,9 +1740,9 @@ lines = "Dev1/port1/line0:3"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            do = DigitalOutput.from_config(path)
+            do = DOTask.from_config(path)
 
         mock_cls.assert_called_once_with(new_task_name="leds")
         assert do.task_name == "leds"
@@ -1783,9 +1783,9 @@ lines = "Dev1/port2/line0:7"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            DigitalOutput.from_config(path)
+            DOTask.from_config(path)
 
         assert mock_ni_task.do_channels.add_do_chan.call_count == 2
 
@@ -1822,9 +1822,9 @@ lines = "Dev1/port1/line0"
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            do = DigitalOutput.from_config(path)
+            do = DOTask.from_config(path)
 
         assert do.mode == "clocked"
         assert do.sample_rate == 3000
@@ -1848,22 +1848,22 @@ lines = "Dev1/port1/line0"
             ),
             patch("nidaqwrapper.digital.constants", mock_constants),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
             with pytest.raises(ValueError, match="task"):
-                DigitalOutput.from_config(path)
+                DOTask.from_config(path)
 
     def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises an error on syntactically invalid TOML."""
         path = self._write_config(tmp_path, "not = valid [ toml {\n")
 
-        from nidaqwrapper.digital import DigitalOutput
+        from nidaqwrapper.digital import DOTask
 
         with pytest.raises(Exception):  # tomllib.TOMLDecodeError
-            DigitalOutput.from_config(path)
+            DOTask.from_config(path)
 
 
-class TestDigitalOutputConfigRoundtrip:
+class TestDOTaskConfigRoundtrip:
     """save_config() + from_config() round-trip preserves task configuration."""
 
     def test_roundtrip_on_demand(self, mock_system, mock_constants, tmp_path):
@@ -1895,9 +1895,9 @@ class TestDigitalOutputConfigRoundtrip:
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            do2 = DigitalOutput.from_config(path)
+            do2 = DOTask.from_config(path)
 
         assert do2.task_name == "roundtrip_do"
         assert do2.sample_rate is None
@@ -1935,9 +1935,9 @@ class TestDigitalOutputConfigRoundtrip:
                 side_effect=lambda lines: lines,
             ),
         ):
-            from nidaqwrapper.digital import DigitalOutput
+            from nidaqwrapper.digital import DOTask
 
-            do2 = DigitalOutput.from_config(path)
+            do2 = DOTask.from_config(path)
 
         assert do2.task_name == "pattern_gen"
         assert do2.sample_rate == 4000

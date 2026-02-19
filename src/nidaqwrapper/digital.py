@@ -1,6 +1,6 @@
 """Digital I/O classes for NI-DAQmx digital input and output.
 
-Provides ``DigitalInput`` and ``DigitalOutput`` classes supporting both
+Provides ``DITask`` and ``DOTask`` classes supporting both
 on-demand (single-sample) and clocked (continuous/buffered) operation modes.
 Digital channels use NI line specification strings rather than device/channel
 indices.
@@ -15,7 +15,7 @@ source of truth; no intermediate channel dict is maintained.
 Notes
 -----
 This is a new module — no LDAQ/OpenEOL source to consolidate. The design
-follows the patterns from NITask and NITaskOutput for consistency.
+follows the patterns from AITask and AOTask for consistency.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _expand_port_to_line_range(lines: str) -> str:
         l.name for l in dev.di_lines if l.name.startswith(lines + "/")
     ]
     if not port_lines:
-        # Try DO lines (for DigitalOutput)
+        # Try DO lines (for DOTask)
         port_lines = [
             l.name for l in dev.do_lines if l.name.startswith(lines + "/")
         ]
@@ -73,7 +73,7 @@ def _expand_port_to_line_range(lines: str) -> str:
     return f"{lines}/line0:{n_lines - 1}"
 
 
-class DigitalInput:
+class DITask:
     """Programmatic digital input task supporting on-demand and clocked modes.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -99,7 +99,7 @@ class DigitalInput:
     --------
     On-demand (single-sample) usage:
 
-    >>> di = DigitalInput(task_name='switches')
+    >>> di = DITask(task_name='switches')
     >>> di.add_channel('sw1', lines='Dev1/port0/line0:3')
     >>> di.start()
     >>> data = di.read()
@@ -107,7 +107,7 @@ class DigitalInput:
 
     Clocked (continuous) usage:
 
-    >>> di = DigitalInput(task_name='fast_di', sample_rate=1000)
+    >>> di = DITask(task_name='fast_di', sample_rate=1000)
     >>> di.add_channel('signals', lines='Dev1/port0/line0:7')
     >>> di.start(start_task=True)
     >>> data = di.read_all_available()
@@ -263,7 +263,7 @@ class DigitalInput:
         if self.mode != "clocked":
             raise RuntimeError(
                 "read_all_available() requires clocked mode. "
-                "Create DigitalInput with a sample_rate to enable "
+                "Create DITask with a sample_rate to enable "
                 "continuous reading."
             )
 
@@ -337,8 +337,8 @@ class DigitalInput:
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
 
     @classmethod
-    def from_config(cls, path: str | pathlib.Path) -> DigitalInput:
-        """Create a :class:`DigitalInput` from a TOML configuration file.
+    def from_config(cls, path: str | pathlib.Path) -> DITask:
+        """Create a :class:`DITask` from a TOML configuration file.
 
         Reads the TOML file produced by :meth:`save_config`, constructs a new
         task, and calls :meth:`add_channel` for every ``[[channels]]`` entry.
@@ -350,7 +350,7 @@ class DigitalInput:
 
         Returns
         -------
-        DigitalInput
+        DITask
             A fully configured task (channels added, not yet started).
 
         Raises
@@ -385,7 +385,7 @@ class DigitalInput:
 
     # -- Context manager -----------------------------------------------------
 
-    def __enter__(self) -> DigitalInput:
+    def __enter__(self) -> DITask:
         """Enter the context manager."""
         return self
 
@@ -394,7 +394,7 @@ class DigitalInput:
         self.clear_task()
 
 
-class DigitalOutput:
+class DOTask:
     """Programmatic digital output task supporting on-demand and clocked modes.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -420,7 +420,7 @@ class DigitalOutput:
     --------
     On-demand (single-sample) usage:
 
-    >>> do = DigitalOutput(task_name='leds')
+    >>> do = DOTask(task_name='leds')
     >>> do.add_channel('led_1', lines='Dev1/port1/line0')
     >>> do.start()
     >>> do.write(True)
@@ -428,7 +428,7 @@ class DigitalOutput:
 
     Clocked (continuous) usage:
 
-    >>> do = DigitalOutput(task_name='pattern_gen', sample_rate=1000)
+    >>> do = DOTask(task_name='pattern_gen', sample_rate=1000)
     >>> do.add_channel('lines', lines='Dev1/port1/line0:3')
     >>> do.start(start_task=True)
     >>> do.write_continuous(data)
@@ -585,7 +585,7 @@ class DigitalOutput:
         if self.mode != "clocked":
             raise RuntimeError(
                 "write_continuous() requires clocked mode. "
-                "Create DigitalOutput with a sample_rate to enable "
+                "Create DOTask with a sample_rate to enable "
                 "continuous writing."
             )
 
@@ -653,8 +653,8 @@ class DigitalOutput:
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
 
     @classmethod
-    def from_config(cls, path: str | pathlib.Path) -> DigitalOutput:
-        """Create a :class:`DigitalOutput` from a TOML configuration file.
+    def from_config(cls, path: str | pathlib.Path) -> DOTask:
+        """Create a :class:`DOTask` from a TOML configuration file.
 
         Reads the TOML file produced by :meth:`save_config`, constructs a new
         task, and calls :meth:`add_channel` for every ``[[channels]]`` entry.
@@ -666,7 +666,7 @@ class DigitalOutput:
 
         Returns
         -------
-        DigitalOutput
+        DOTask
             A fully configured task (channels added, not yet started).
 
         Raises
@@ -701,7 +701,7 @@ class DigitalOutput:
 
     # -- Context manager -----------------------------------------------------
 
-    def __enter__(self) -> DigitalOutput:
+    def __enter__(self) -> DOTask:
         """Enter the context manager."""
         return self
 

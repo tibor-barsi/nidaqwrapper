@@ -1,6 +1,6 @@
-"""NITaskOutput — programmatic analog output task configuration.
+"""AOTask — programmatic analog output task configuration.
 
-Provides the :class:`NITaskOutput` class for creating and managing NI-DAQmx
+Provides the :class:`AOTask` class for creating and managing NI-DAQmx
 analog output tasks.  Channels are added programmatically (not from NI MAX),
 and the output buffer supports continuous regeneration.
 
@@ -20,7 +20,7 @@ through unchanged.
 
 Examples
 --------
->>> task = NITaskOutput("sig_gen", sample_rate=10000)
+>>> task = AOTask("sig_gen", sample_rate=10000)
 >>> task.add_channel("ao_0", device_ind=0, channel_ind=0)
 >>> task.start()
 >>> task.generate(signal_array)
@@ -28,7 +28,7 @@ Examples
 
 Or as a context manager::
 
-    with NITaskOutput("sig_gen", 10000) as task:
+    with AOTask("sig_gen", 10000) as task:
         task.add_channel("ao_0", device_ind=0, channel_ind=0)
         task.start()
         task.generate(signal_array)
@@ -51,7 +51,7 @@ except ImportError:
     _NIDAQMX_AVAILABLE = False
 
 
-class NITaskOutput:
+class AOTask:
     """Programmatic analog output task for NI-DAQmx devices.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -361,8 +361,8 @@ class NITaskOutput:
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
 
     @classmethod
-    def from_config(cls, path: str | pathlib.Path) -> NITaskOutput:
-        """Create an :class:`NITaskOutput` from a TOML configuration file.
+    def from_config(cls, path: str | pathlib.Path) -> AOTask:
+        """Create an :class:`AOTask` from a TOML configuration file.
 
         Reads the TOML file produced by :meth:`save_config`, constructs
         a new task, and calls :meth:`add_channel` for every ``[[channels]]``
@@ -375,7 +375,7 @@ class NITaskOutput:
 
         Returns
         -------
-        NITaskOutput
+        AOTask
             A fully configured task (channels added, not yet started).
 
         Raises
@@ -389,7 +389,7 @@ class NITaskOutput:
 
         Examples
         --------
-        >>> task = NITaskOutput.from_config("/tmp/signal_gen.toml")
+        >>> task = AOTask.from_config("/tmp/signal_gen.toml")
         >>> task.start()
         """
         try:
@@ -454,7 +454,7 @@ class NITaskOutput:
 
     # -- Context manager -----------------------------------------------------
 
-    def __enter__(self) -> NITaskOutput:
+    def __enter__(self) -> AOTask:
         """Enter the context manager."""
         return self
 

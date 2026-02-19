@@ -1,4 +1,4 @@
-"""Tests for nidaqwrapper.task_output module (NITaskOutput class).
+"""Tests for nidaqwrapper.ao_task module (AOTask class).
 
 Architecture: Direct Delegation
 --------------------------------
@@ -71,9 +71,9 @@ def _build(
     task_name: str = "signal_gen",
     samples_per_channel: int | None = None,
 ):
-    """Construct an NITaskOutput inside a fully-patched context.
+    """Construct an AOTask inside a fully-patched context.
 
-    Returns (exit_stack, ni_task_output_instance, mock_nidaqmx_task).
+    Returns (exit_stack, ao_task_instance, mock_nidaqmx_task).
     Use inside a ``with`` block — patches stay active so that add_channel()
     and start() can also run under mocking.
 
@@ -94,33 +94,33 @@ def _build(
 
     stack = ExitStack()
     stack.enter_context(
-        patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+        patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
               return_value=system)
     )
     stack.enter_context(
-        patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+        patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
               return_value=mock_ni_task)
     )
     stack.enter_context(
-        patch("nidaqwrapper.task_output.constants", mock_constants)
+        patch("nidaqwrapper.ao_task.constants", mock_constants)
     )
 
-    from nidaqwrapper.task_output import NITaskOutput
+    from nidaqwrapper.ao_task import AOTask
 
     kwargs = {}
     if samples_per_channel is not None:
         kwargs["samples_per_channel"] = samples_per_channel
 
-    ni_task = NITaskOutput(task_name, sample_rate=sample_rate, **kwargs)
+    ni_task = AOTask(task_name, sample_rate=sample_rate, **kwargs)
 
     return stack, ni_task, mock_ni_task
 
 
 # ===========================================================================
-# Task Group 4.1: NITaskOutput Constructor
+# Task Group 4.1: AOTask Constructor
 # ===========================================================================
 
-class TestNITaskOutputConstructor:
+class TestAOTaskConstructor:
     """Constructor creates nidaqmx.Task immediately (direct delegation)."""
 
     def test_creates_nidaqmx_task_with_name(self, mock_system, mock_constants):
@@ -129,14 +129,14 @@ class TestNITaskOutputConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task) as mock_cls,
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            NITaskOutput("signal_gen", sample_rate=10000)
+            from nidaqwrapper.ao_task import AOTask
+            AOTask("signal_gen", sample_rate=10000)
 
         mock_cls.assert_called_once_with(new_task_name="signal_gen")
 
@@ -146,14 +146,14 @@ class TestNITaskOutputConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            task = NITaskOutput("signal_gen", sample_rate=10000)
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask("signal_gen", sample_rate=10000)
 
         assert task.task is mock_ni_task
 
@@ -208,14 +208,14 @@ class TestNITaskOutputConstructor:
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            task = NITaskOutput("signal_gen", sample_rate=10000)
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask("signal_gen", sample_rate=10000)
 
         assert task.device_list == []
 
@@ -224,13 +224,13 @@ class TestNITaskOutputConstructor:
         system = mock_system(task_names=["existing_task"])
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
+            from nidaqwrapper.ao_task import AOTask
             with pytest.raises(ValueError, match="already"):
-                NITaskOutput("existing_task", sample_rate=10000)
+                AOTask("existing_task", sample_rate=10000)
 
     def test_no_channels_dict(self, mock_system, mock_constants):
         """The old self.channels dict no longer exists."""
@@ -688,10 +688,10 @@ class TestClearTask:
 # ===========================================================================
 
 class TestContextManager:
-    """NITaskOutput __enter__/__exit__ (context manager protocol)."""
+    """AOTask __enter__/__exit__ (context manager protocol)."""
 
     def test_enter_returns_self(self, mock_system, mock_constants):
-        """__enter__ returns the NITaskOutput instance."""
+        """__enter__ returns the AOTask instance."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -754,7 +754,7 @@ class TestInitiateRemoved:
     """Old initiate() and its private helpers no longer exist."""
 
     def test_no_initiate_method(self, mock_system, mock_constants):
-        """initiate() method does not exist on NITaskOutput."""
+        """initiate() method does not exist on AOTask."""
         ctx, task, _ = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -793,7 +793,7 @@ except ModuleNotFoundError:
 
 
 class TestSaveConfig:
-    """save_config() serialises the NITaskOutput configuration to TOML."""
+    """save_config() serialises the AOTask configuration to TOML."""
 
     def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
         """save_config() creates a file that can be parsed as TOML."""
@@ -912,7 +912,7 @@ class TestSaveConfig:
 
 
 class TestFromConfig:
-    """from_config() creates an NITaskOutput from a TOML file."""
+    """from_config() creates an AOTask from a TOML file."""
 
     def _write_config(self, tmp_path, content: str):
         """Write a TOML string to a temp file and return the path."""
@@ -942,14 +942,14 @@ max_val = 10.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task) as mock_cls,
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            task = NITaskOutput.from_config(path)
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_config(path)
 
         mock_cls.assert_called_once_with(new_task_name="signal_gen")
         assert task.sample_rate == 10000
@@ -976,14 +976,14 @@ max_val = 10.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            NITaskOutput.from_config(path)
+            from nidaqwrapper.ao_task import AOTask
+            AOTask.from_config(path)
 
         # cDAQ1Mod2 is device_ind=1, so physical channel should be cDAQ1Mod2/ao0
         kwargs = mock_ni_task.ao_channels.add_ao_voltage_chan.call_args.kwargs
@@ -1011,14 +1011,14 @@ max_val = 5.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            NITaskOutput.from_config(path)
+            from nidaqwrapper.ao_task import AOTask
+            AOTask.from_config(path)
 
         kwargs = mock_ni_task.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["min_val"] == -5.0
@@ -1054,14 +1054,14 @@ max_val = 10.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
-            NITaskOutput.from_config(path)
+            from nidaqwrapper.ao_task import AOTask
+            AOTask.from_config(path)
 
         assert mock_ni_task.ao_channels.add_ao_voltage_chan.call_count == 2
         calls = mock_ni_task.ao_channels.add_ao_voltage_chan.call_args_list
@@ -1091,15 +1091,15 @@ max_val = 10.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
+            from nidaqwrapper.ao_task import AOTask
             with pytest.raises(ValueError, match="alias|device"):
-                NITaskOutput.from_config(path)
+                AOTask.from_config(path)
 
     def test_device_not_in_system_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when device name is not in the system."""
@@ -1123,15 +1123,15 @@ max_val = 10.0
         mock_ni_task = _make_mock_ni_task()
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.nidaqmx.task.Task",
+            patch("nidaqwrapper.ao_task.nidaqmx.task.Task",
                   return_value=mock_ni_task),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
+            from nidaqwrapper.ao_task import AOTask
             with pytest.raises(ValueError, match="device|not found"):
-                NITaskOutput.from_config(path)
+                AOTask.from_config(path)
 
     def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [task] section is missing."""
@@ -1149,13 +1149,13 @@ max_val = 10.0
         system = mock_system(task_names=[])
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
+            from nidaqwrapper.ao_task import AOTask
             with pytest.raises(ValueError, match="task"):
-                NITaskOutput.from_config(path)
+                AOTask.from_config(path)
 
     def test_missing_devices_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [devices] section is missing."""
@@ -1175,18 +1175,18 @@ max_val = 10.0
         system = mock_system(task_names=[])
 
         with (
-            patch("nidaqwrapper.task_output.nidaqmx.system.System.local",
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.task_output.constants", mock_constants),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
-            from nidaqwrapper.task_output import NITaskOutput
+            from nidaqwrapper.ao_task import AOTask
             with pytest.raises(ValueError, match="devices"):
-                NITaskOutput.from_config(path)
+                AOTask.from_config(path)
 
     def test_malformed_toml_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises an error on syntactically invalid TOML."""
         path = self._write_config(tmp_path, "not = valid [ toml {\n")
 
-        from nidaqwrapper.task_output import NITaskOutput
+        from nidaqwrapper.ao_task import AOTask
         with pytest.raises(Exception):  # tomllib.TOMLDecodeError
-            NITaskOutput.from_config(path)
+            AOTask.from_config(path)

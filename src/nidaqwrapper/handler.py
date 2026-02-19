@@ -1,18 +1,18 @@
 """High-level single-task NI-DAQmx interface.
 
-Provides :class:`NIDAQWrapper`, which consolidates OpenEOL's
+Provides :class:`DAQHandler`, which consolidates OpenEOL's
 ``IONationalInstruments`` lifecycle, LDAQ's ``NIAcquisition`` / ``NIGeneration``
 patterns, and pyTrigger-based software triggering into a single, unified class.
 
-Supports NI MAX task name strings and programmatic :class:`NITask` /
-:class:`NITaskOutput` objects.  Thread-safe via per-instance
+Supports NI MAX task name strings and programmatic :class:`AITask` /
+:class:`AOTask` objects.  Thread-safe via per-instance
 :class:`threading.RLock`.
 
 Examples
 --------
 Standalone quick-start::
 
-    wrapper = NIDAQWrapper(task_in='MyInputTask')
+    wrapper = DAQHandler(task_in='MyInputTask')
     wrapper.connect()
     wrapper.set_trigger(n_samples=1000, trigger_channel=0, trigger_level=0.5)
     data = wrapper.acquire()
@@ -20,7 +20,7 @@ Standalone quick-start::
 
 Framework integration (LDAQ / OpenEOL)::
 
-    wrapper = NIDAQWrapper()
+    wrapper = DAQHandler()
     wrapper.configure(task_in=ni_task_obj, task_out='OutputTask')
     wrapper.connect()
     ...
@@ -38,9 +38,9 @@ import warnings
 
 import numpy as np
 
-from .digital import DigitalInput, DigitalOutput
-from .task_input import NITask
-from .task_output import NITaskOutput
+from .digital import DITask, DOTask
+from .ai_task import AITask
+from .ao_task import AOTask
 from .utils import get_connected_devices, get_task_by_name
 
 try:
@@ -59,21 +59,21 @@ except ImportError:
     _PYTRIGGER_AVAILABLE = False
 
 
-class NIDAQWrapper:
+class DAQHandler:
     """High-level single-task NI-DAQmx interface.
 
     Supports NI MAX task names (strings) and programmatic
-    :class:`NITask` / :class:`NITaskOutput` objects.  Provides a
+    :class:`AITask` / :class:`AOTask` objects.  Provides a
     ``configure → connect → acquire/generate → disconnect`` lifecycle
     with software-triggered acquisition via pyTrigger, continuous signal
     generation, single-sample I/O, auto-reconnection, and thread safety.
 
     Parameters
     ----------
-    task_in : str or NITask, optional
-        Input task — NI MAX name string or :class:`NITask` instance.
-    task_out : str or NITaskOutput, optional
-        Output task — NI MAX name string or :class:`NITaskOutput` instance.
+    task_in : str or AITask, optional
+        Input task — NI MAX name string or :class:`AITask` instance.
+    task_out : str or AOTask, optional
+        Output task — NI MAX name string or :class:`AOTask` instance.
     **kwargs
         Additional keyword arguments forwarded to :meth:`configure`.
         Includes ``acquisition_sleep`` and ``post_trigger_delay``.
@@ -81,8 +81,8 @@ class NIDAQWrapper:
 
     def __init__(
         self,
-        task_in: str | NITask | None = None,
-        task_out: str | NITaskOutput | None = None,
+        task_in: str | AITask | None = None,
+        task_out: str | AOTask | None = None,
         **kwargs: Any,
     ) -> None:
         self._lock = threading.RLock()
@@ -98,8 +98,8 @@ class NIDAQWrapper:
         # Task references (active nidaqmx task handles)
         self._task_in: Any | None = None
         self._task_out: Any | None = None
-        self._task_in_obj_active: Any | None = None  # active NITask obj
-        self._task_out_obj_active: Any | None = None  # active NITaskOutput obj
+        self._task_in_obj_active: Any | None = None  # active AITask obj
+        self._task_out_obj_active: Any | None = None  # active AOTask obj
 
         # Type flags
         self._task_in_is_str = False
@@ -109,11 +109,11 @@ class NIDAQWrapper:
 
         # Stored configuration for reconnection
         self._task_in_name: str | None = None
-        self._task_in_obj: NITask | None = None
+        self._task_in_obj: AITask | None = None
         self._task_in_name_str: str | None = None
         self._task_in_sample_rate: float | None = None
         self._task_out_name: str | None = None
-        self._task_out_obj: NITaskOutput | None = None
+        self._task_out_obj: AOTask | None = None
         self._task_out_name_str: str | None = None
         self._task_out_sample_rate: float | None = None
 
@@ -130,13 +130,13 @@ class NIDAQWrapper:
         self._task_digital_in_is_str = False
         self._task_digital_in_is_obj = False
         self._task_digital_in_name: str | None = None
-        self._task_digital_in_obj: DigitalInput | None = None
-        self._task_digital_in: Any | None = None  # active DigitalInput after connect
+        self._task_digital_in_obj: DITask | None = None
+        self._task_digital_in: Any | None = None  # active DITask after connect
         self._task_digital_out_is_str = False
         self._task_digital_out_is_obj = False
         self._task_digital_out_name: str | None = None
-        self._task_digital_out_obj: DigitalOutput | None = None
-        self._task_digital_out: Any | None = None  # active DigitalOutput after connect
+        self._task_digital_out_obj: DOTask | None = None
+        self._task_digital_out: Any | None = None  # active DOTask after connect
 
         # Runtime flags
         self._acquire_running = False
@@ -162,28 +162,28 @@ class NIDAQWrapper:
 
     def configure(
         self,
-        task_in: str | NITask | None = None,
-        task_out: str | NITaskOutput | None = None,
-        task_digital_in: str | DigitalInput | None = None,
-        task_digital_out: str | DigitalOutput | None = None,
+        task_in: str | AITask | None = None,
+        task_out: str | AOTask | None = None,
+        task_digital_in: str | DITask | None = None,
+        task_digital_out: str | DOTask | None = None,
         **kwargs: Any,
     ) -> None:
         """Configure input, output, and digital tasks.
 
-        Accepts NI MAX task name strings or :class:`NITask` /
-        :class:`NITaskOutput` / :class:`DigitalInput` /
-        :class:`DigitalOutput` objects.  Resets all internal state so the
+        Accepts NI MAX task name strings or :class:`AITask` /
+        :class:`AOTask` / :class:`DITask` /
+        :class:`DOTask` objects.  Resets all internal state so the
         wrapper can be reconfigured without creating a new instance.
 
         Parameters
         ----------
-        task_in : str or NITask, optional
+        task_in : str or AITask, optional
             Analog input task specification.
-        task_out : str or NITaskOutput, optional
+        task_out : str or AOTask, optional
             Analog output task specification.
-        task_digital_in : str or DigitalInput, optional
+        task_digital_in : str or DITask, optional
             Digital input task — object or NI MAX name string.
-        task_digital_out : str or DigitalOutput, optional
+        task_digital_out : str or DOTask, optional
             Digital output task — object or NI MAX name string.
         **kwargs
             ``acquisition_sleep``, ``post_trigger_delay``.
@@ -216,14 +216,14 @@ class NIDAQWrapper:
         if isinstance(task_in, str):
             self._task_in_is_str = True
             self._task_in_name = task_in
-        elif isinstance(task_in, NITask):
+        elif isinstance(task_in, AITask):
             self._task_in_is_obj = True
             self._task_in_obj = task_in
             self._task_in_name_str = task_in.task_name
             self._task_in_sample_rate = task_in.sample_rate
         elif task_in is not None:
             raise TypeError(
-                f"task_in must be a string or NITask, got {type(task_in).__name__}"
+                f"task_in must be a string or AITask, got {type(task_in).__name__}"
             )
 
         # -- Output task -----------------------------------------------
@@ -237,14 +237,14 @@ class NIDAQWrapper:
         if isinstance(task_out, str):
             self._task_out_is_str = True
             self._task_out_name = task_out
-        elif isinstance(task_out, NITaskOutput):
+        elif isinstance(task_out, AOTask):
             self._task_out_is_obj = True
             self._task_out_obj = task_out
             self._task_out_name_str = task_out.task_name
             self._task_out_sample_rate = task_out.sample_rate
         elif task_out is not None:
             raise TypeError(
-                f"task_out must be a string or NITaskOutput, got {type(task_out).__name__}"
+                f"task_out must be a string or AOTask, got {type(task_out).__name__}"
             )
 
         # -- Digital input task ----------------------------------------
@@ -256,12 +256,12 @@ class NIDAQWrapper:
         if isinstance(task_digital_in, str):
             self._task_digital_in_is_str = True
             self._task_digital_in_name = task_digital_in
-        elif isinstance(task_digital_in, DigitalInput):
+        elif isinstance(task_digital_in, DITask):
             self._task_digital_in_is_obj = True
             self._task_digital_in_obj = task_digital_in
         elif task_digital_in is not None:
             raise TypeError(
-                f"task_digital_in must be a string or DigitalInput, "
+                f"task_digital_in must be a string or DITask, "
                 f"got {type(task_digital_in).__name__}"
             )
 
@@ -274,12 +274,12 @@ class NIDAQWrapper:
         if isinstance(task_digital_out, str):
             self._task_digital_out_is_str = True
             self._task_digital_out_name = task_digital_out
-        elif isinstance(task_digital_out, DigitalOutput):
+        elif isinstance(task_digital_out, DOTask):
             self._task_digital_out_is_obj = True
             self._task_digital_out_obj = task_digital_out
         elif task_digital_out is not None:
             raise TypeError(
-                f"task_digital_out must be a string or DigitalOutput, "
+                f"task_digital_out must be a string or DOTask, "
                 f"got {type(task_digital_out).__name__}"
             )
 
@@ -310,7 +310,7 @@ class NIDAQWrapper:
         """Connect to NI hardware by loading/creating tasks.
 
         For NI MAX name strings, loads the saved task via
-        :func:`get_task_by_name`.  For :class:`NITask` objects, calls
+        :func:`get_task_by_name`.  For :class:`AITask` objects, calls
         ``start()`` to create the underlying hardware task.
 
         Returns
@@ -686,7 +686,7 @@ class NIDAQWrapper:
     def read_digital(self) -> np.ndarray:
         """Read the current state of all configured digital input lines.
 
-        Delegates to the stored :class:`DigitalInput` task's ``read()``
+        Delegates to the stored :class:`DITask` task's ``read()``
         method for on-demand reading.
 
         Returns
@@ -717,7 +717,7 @@ class NIDAQWrapper:
     ) -> None:
         """Write values to all configured digital output lines.
 
-        Delegates to the stored :class:`DigitalOutput` task's ``write()``
+        Delegates to the stored :class:`DOTask` task's ``write()``
         method for on-demand writing.
 
         Parameters
@@ -1023,7 +1023,7 @@ class NIDAQWrapper:
     # Context manager
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> NIDAQWrapper:
+    def __enter__(self) -> DAQHandler:
         """Enter the runtime context."""
         return self
 
@@ -1107,8 +1107,8 @@ class NIDAQWrapper:
         self._n_channels_in = task.number_of_channels
         self._sample_rate_in = float(task.timing.samp_clk_rate)
 
-    def _extract_input_metadata_from_ni_task(self, ni_task: NITask) -> None:
-        """Extract metadata from a programmatic NITask object."""
+    def _extract_input_metadata_from_ni_task(self, ni_task: AITask) -> None:
+        """Extract metadata from a programmatic AITask object."""
         self._channel_names_in = ni_task.channel_list
         self._n_channels_in = ni_task.number_of_ch
         self._sample_rate_in = ni_task.sample_rate
@@ -1120,9 +1120,9 @@ class NIDAQWrapper:
         self._sample_rate_out = float(task.timing.samp_clk_rate)
 
     def _extract_output_metadata_from_ni_task_out(
-        self, ni_task_out: NITaskOutput
+        self, ni_task_out: AOTask
     ) -> None:
-        """Extract metadata from a programmatic NITaskOutput object."""
+        """Extract metadata from a programmatic AOTask object."""
         self._channel_names_out = ni_task_out.channel_list
         self._n_channels_out = ni_task_out.number_of_ch
         self._sample_rate_out = ni_task_out.sample_rate

@@ -1,7 +1,7 @@
 """Multi-task synchronized NI-DAQmx acquisition.
 
-Provides the :class:`NIAdvanced` class, which consolidates OpenEOL's
-NIAdvanced implementation with four bug fixes applied.  It supports
+Provides the :class:`MultiHandler` class, which consolidates OpenEOL's
+advanced implementation with four bug fixes applied.  It supports
 synchronizing multiple NI-DAQmx tasks via hardware triggers (FINITE mode)
 or a single-task software trigger using pyTrigger (CONTINUOUS mode).
 
@@ -19,7 +19,7 @@ Bug Fixes Applied (relative to OpenEOL base_advanced.py)
 
 Notes
 -----
-NIAdvanced is **not** a subclass of NIDAQWrapper (NFR-8.2).  It is an
+MultiHandler is **not** a subclass of DAQHandler (NFR-8.2).  It is an
 independent class that operates on pre-configured nidaqmx tasks.
 """
 
@@ -32,8 +32,8 @@ import warnings
 import numpy as np
 
 from .utils import get_connected_devices, get_task_by_name
-from .task_input import NITask
-from .task_output import NITaskOutput
+from .ai_task import AITask
+from .ao_task import AOTask
 
 try:
     import nidaqmx
@@ -62,7 +62,7 @@ _DAQ_ERROR_INVALID_TASK = -200088
 _DAQ_ERROR_NO_CHANNELS = -200478
 
 
-class NIAdvanced:
+class MultiHandler:
     """Multi-task synchronized NI-DAQmx acquisition.
 
     Supports multiple input and output tasks with hardware trigger
@@ -92,7 +92,7 @@ class NIAdvanced:
 
     Examples
     --------
-    >>> adv = NIAdvanced()
+    >>> adv = MultiHandler()
     >>> adv.configure(input_tasks=[task1, task2])
     True
     >>> adv.connect()
@@ -132,7 +132,7 @@ class NIAdvanced:
         ----------
         input_tasks : list or None, optional
             Input (acquisition) tasks.  Each element may be a
-            ``nidaqmx.task.Task``, :class:`NITask`, :class:`NITaskOutput`,
+            ``nidaqmx.task.Task``, :class:`AITask`, :class:`AOTask`,
             or ``str`` (task name in NI MAX).  Default is an empty list.
         output_tasks : list or None, optional
             Output (generation) tasks.  Same accepted types as
@@ -478,7 +478,7 @@ class NIAdvanced:
         previously accumulated data does not bleed into the new measurement.
 
         pyTrigger does not provide a ``reset()`` method, so each attribute
-        is restored manually (same pattern as ``NIDAQWrapper._reset_trigger``).
+        is restored manually (same pattern as ``DAQHandler._reset_trigger``).
         """
         if self.trigger is not None:
             self.trigger.ringbuff.clear()
@@ -544,7 +544,7 @@ class NIAdvanced:
         ------
         TypeError
             If either argument is not a list, or if any element is not a
-            ``str``, :class:`NITask`, :class:`NITaskOutput`, or
+            ``str``, :class:`AITask`, :class:`AOTask`, or
             ``nidaqmx.task.Task``.
         """
         if not isinstance(input_tasks, list):
@@ -560,8 +560,8 @@ class NIAdvanced:
             for task in task_list:
                 if not self._is_valid_task_type(task):
                     raise TypeError(
-                        f"All {label}_tasks must be nidaqmx.task.Task, NITask, "
-                        f"NITaskOutput, or str. Got {type(task).__name__}."
+                        f"All {label}_tasks must be nidaqmx.task.Task, AITask, "
+                        f"AOTask, or str. Got {type(task).__name__}."
                     )
 
         return True
@@ -578,7 +578,7 @@ class NIAdvanced:
         -------
         bool
         """
-        if isinstance(task, (str, NITask, NITaskOutput)):
+        if isinstance(task, (str, AITask, AOTask)):
             return True
         # nidaqmx may not be installed; guard the isinstance check
         if _NIDAQMX_AVAILABLE and isinstance(task, nidaqmx.task.Task):
@@ -591,8 +591,8 @@ class NIAdvanced:
         Accepts four types and resolves each:
 
         - ``str``           → :func:`get_task_by_name`
-        - :class:`NITask`   → ``ni_task.start(start_task=False)``
-        - :class:`NITaskOutput` → ``ni_task_out.start(start_task=False)``
+        - :class:`AITask`   → ``ni_task.start(start_task=False)``
+        - :class:`AOTask` → ``ni_task_out.start(start_task=False)``
         - ``nidaqmx.task.Task`` → passed through unchanged
 
         Parameters
@@ -615,11 +615,11 @@ class NIAdvanced:
             if isinstance(task, str):
                 resolved.append(get_task_by_name(task))
 
-            elif isinstance(task, NITask):
+            elif isinstance(task, AITask):
                 task.start(start_task=False)
                 resolved.append(task.task)
 
-            elif isinstance(task, NITaskOutput):
+            elif isinstance(task, AOTask):
                 task.start(start_task=False)
                 resolved.append(task.task)
 
@@ -628,7 +628,7 @@ class NIAdvanced:
 
             else:
                 raise TypeError(
-                    f"Task must be nidaqmx.task.Task, NITask, NITaskOutput, "
+                    f"Task must be nidaqmx.task.Task, AITask, AOTask, "
                     f"or str. Got {type(task).__name__}."
                 )
 
