@@ -1436,7 +1436,7 @@ class TestFromTask:
             task.clear_task()
 
         external.close.assert_not_called()
-        assert task.task is external  # Task reference remains
+        assert task.task is None  # Task reference cleared
 
     def test_clear_task_warns_external(self, mock_system, mock_constants):
         """clear_task() warns when _owns_task is False."""

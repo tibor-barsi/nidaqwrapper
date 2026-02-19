@@ -439,7 +439,7 @@ class AITask:
         """
         if hasattr(self, "task") and self.task is not None:
             # If we don't own the task, skip close and warn the user
-            if hasattr(self, "_owns_task") and not self._owns_task:
+            if not self._owns_task:
                 warnings.warn(
                     "Task was created externally — not closing. "
                     "Call task.close() when done.",

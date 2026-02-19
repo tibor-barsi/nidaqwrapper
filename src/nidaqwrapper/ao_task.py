@@ -326,6 +326,7 @@ class AOTask:
                     "Call task.close() when done.",
                     stacklevel=2,
                 )
+                self.task = None
                 return
 
             # Close owned tasks
