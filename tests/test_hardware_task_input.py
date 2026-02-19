@@ -250,12 +250,12 @@ class TestHardwareStart:
 
 
 class TestHardwareAcquire:
-    """Verify acquire_base() returns correctly shaped data from the NI 9215."""
+    """Verify acquire() returns correctly shaped data from the NI 9215."""
 
-    def test_acquire_base_returns_data(self) -> None:
-        """acquire_base() on a running single-channel task returns (1, n) ndarray.
+    def test_acquire_returns_data(self) -> None:
+        """acquire() on a running single-channel task returns (1, n) ndarray.
 
-        After a brief sleep to let the hardware buffer fill, acquire_base()
+        After a brief sleep to let the hardware buffer fill, acquire()
         must return a 2-D numpy array with exactly 1 row (channel-major layout)
         and at least one sample column.
 
@@ -278,11 +278,11 @@ class TestHardwareAcquire:
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
 
             # Let the buffer refill after the priming drain
             time.sleep(0.2)
-            data = task.acquire_base()
+            data = task.acquire()
 
             assert isinstance(data, np.ndarray), (
                 f"Expected ndarray, got {type(data)}"
@@ -299,12 +299,12 @@ class TestHardwareAcquire:
         finally:
             task.clear_task()
 
-    def test_acquire_base_multi_channel(self) -> None:
-        """acquire_base() on a 2-channel task returns (2, n) ndarray.
+    def test_acquire_multi_channel(self) -> None:
+        """acquire() on a 2-channel task returns (2, n) ndarray.
 
         Confirms that the channel-major shape is maintained when more than
         one physical channel is active — nidaqmx returns a list-of-lists for
-        multi-channel tasks, and acquire_base() must convert that to 2-D.
+        multi-channel tasks, and acquire() must convert that to 2-D.
         """
         from nidaqwrapper.ai_task import AITask
 
@@ -326,11 +326,11 @@ class TestHardwareAcquire:
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
 
             # Let the buffer refill after the priming drain
             time.sleep(0.2)
-            data = task.acquire_base()
+            data = task.acquire()
 
             assert data.ndim == 2, (
                 f"Expected 2-D array, got shape {data.shape}"
@@ -364,11 +364,11 @@ class TestHardwareAcquire:
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
 
             # Let the buffer refill after the priming drain
             time.sleep(0.2)
-            data = task.acquire_base()
+            data = task.acquire()
 
             assert data.size > 0, "Expected non-empty data array"
             assert np.all(data >= VOLTAGE_MIN), (

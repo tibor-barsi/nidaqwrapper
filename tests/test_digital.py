@@ -555,10 +555,10 @@ class TestDITaskRead:
 
 
 class TestDITaskReadAllAvailable:
-    """read_all_available() reads buffered data in clocked mode."""
+    """acquire() reads buffered data in clocked mode."""
 
     def test_returns_n_samples_n_lines(self, mock_system, mock_constants):
-        """read_all_available() returns (n_samples, n_lines) shaped array."""
+        """acquire() returns (n_samples, n_lines) shaped array."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         # nidaqmx returns (n_lines, n_samples) for multi-line — 4 lines, 500 samples
         mt.read.return_value = [
@@ -570,39 +570,39 @@ class TestDITaskReadAllAvailable:
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0:3")
             di.start(start_task=False)
-            data = di.read_all_available()
+            data = di.acquire()
 
         assert data.shape == (500, 4)
 
     def test_empty_buffer(self, mock_system, mock_constants):
-        """read_all_available() returns an empty array when the buffer is empty."""
+        """acquire() returns an empty array when the buffer is empty."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         mt.read.return_value = []
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            data = di.read_all_available()
+            data = di.acquire()
 
         assert data.size == 0
 
-    def test_uses_read_all_available_constant(self, mock_system, mock_constants):
-        """read_all_available() passes READ_ALL_AVAILABLE to task.read()."""
+    def test_uses_acquire_constant(self, mock_system, mock_constants):
+        """acquire() passes READ_ALL_AVAILABLE to task.read()."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         mt.read.return_value = [True, False]
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.read_all_available()
+            di.acquire()
 
         mt.read.assert_called_with(
             number_of_samples_per_channel=mock_constants.READ_ALL_AVAILABLE
         )
 
     def test_raises_in_on_demand_mode(self, mock_system, mock_constants):
-        """read_all_available() raises RuntimeError when mode is on_demand."""
+        """acquire() raises RuntimeError when mode is on_demand."""
         ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=None)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
             with pytest.raises(RuntimeError, match="clocked mode"):
-                di.read_all_available()
+                di.acquire()
 
     def test_single_line_reshaped(self, mock_system, mock_constants):
         """Single-line clocked read is reshaped to (n_samples, 1)."""
@@ -612,7 +612,7 @@ class TestDITaskReadAllAvailable:
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
             di.start(start_task=False)
-            data = di.read_all_available()
+            data = di.acquire()
 
         assert data.shape == (3, 1)
 

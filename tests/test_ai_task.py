@@ -842,11 +842,11 @@ class TestSettingsRemoved:
 
 
 # ===========================================================================
-# Existing: acquire_base() — minimal changes
+# Existing: acquire() — minimal changes
 # ===========================================================================
 
 class TestAcquireBase:
-    """acquire_base() reads all available samples from the hardware buffer."""
+    """acquire() reads all available samples from the hardware buffer."""
 
     def test_multi_channel(self, mock_system, mock_constants):
         """Multi-channel read returns (n_channels, n_samples) numpy array."""
@@ -859,7 +859,7 @@ class TestAcquireBase:
             [7.0, 8.0, 9.0],
         ]
 
-        result = task.acquire_base()
+        result = task.acquire()
 
         assert isinstance(result, np.ndarray)
         assert result.shape == (3, 3)
@@ -872,7 +872,7 @@ class TestAcquireBase:
             pass
         mt.read.return_value = [1.0, 2.0, 3.0, 4.0]
 
-        result = task.acquire_base()
+        result = task.acquire()
 
         assert result.ndim == 2
         assert result.shape == (1, 4)
@@ -884,18 +884,18 @@ class TestAcquireBase:
             pass
         mt.read.return_value = []
 
-        result = task.acquire_base()
+        result = task.acquire()
         assert isinstance(result, np.ndarray)
         assert result.size == 0
 
-    def test_calls_read_all_available(self, mock_system, mock_constants):
+    def test_calls_acquire(self, mock_system, mock_constants):
         """task.read() is called with number_of_samples_per_channel=-1."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
         mt.read.return_value = [[0.0], [0.0]]
 
-        task.acquire_base()
+        task.acquire()
 
         mt.read.assert_called_once_with(number_of_samples_per_channel=-1)
 

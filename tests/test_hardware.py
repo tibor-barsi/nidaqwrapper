@@ -166,11 +166,11 @@ class TestAITaskHardware:
 
             # Priming read — discard
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
 
             # Real acquisition
             time.sleep(0.2)
-            data = task.acquire_base()
+            data = task.acquire()
 
             assert isinstance(data, np.ndarray), f"Expected ndarray, got {type(data)}"
             assert data.ndim == 2, f"Expected 2-D array, got shape {data.shape}"
@@ -193,11 +193,11 @@ class TestAITaskHardware:
 
             # Priming read
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
 
             # Timed acquisition
             time.sleep(0.5)
-            data = task.acquire_base()
+            data = task.acquire()
 
             expected_samples = int(AI_SAMPLE_RATE * 0.5)
             actual_samples = data.shape[1]
@@ -219,9 +219,9 @@ class TestAITaskHardware:
             task.start(start_task=True)
 
             time.sleep(0.1)
-            task.acquire_base()
+            task.acquire()
             time.sleep(0.1)
-            data = task.acquire_base()
+            data = task.acquire()
             assert data.shape[1] > 0
 
         # After exit, task handle is released
@@ -370,8 +370,8 @@ class TestWrapperProgrammatic:
         finally:
             wrapper.disconnect()
 
-    def test_wrapper_read_all_available(self) -> None:
-        """read_all_available() returns (n_samples, n_channels) data."""
+    def test_wrapper_acquire(self) -> None:
+        """acquire() returns (n_samples, n_channels) data."""
         from nidaqwrapper import DAQHandler, AITask
 
         task = AITask("hw_wrap_raa", sample_rate=AI_SAMPLE_RATE)
@@ -387,11 +387,11 @@ class TestWrapperProgrammatic:
 
             # Priming read
             time.sleep(0.1)
-            wrapper.read_all_available()
+            wrapper.acquire()
 
             # Real read
             time.sleep(0.2)
-            data = wrapper.read_all_available()
+            data = wrapper.acquire()
 
             assert isinstance(data, np.ndarray)
             assert data.ndim == 2

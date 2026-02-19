@@ -699,11 +699,20 @@ class DAQHandler:
     # Read (LDAQ integration + single sample)
     # ------------------------------------------------------------------
 
-    def read_all_available(self) -> np.ndarray:
-        """Read all available samples without triggering (LDAQ pattern).
+    def read_all_available(self, n_samples: int | None = None) -> np.ndarray:
+        """Read samples without triggering (LDAQ pattern).
 
-        Calls ``acquire_base()`` on the active input task and transposes
+        Calls ``acquire()`` on the active input task and transposes
         the result to ``(n_samples, n_channels)`` public format.
+
+        Parameters
+        ----------
+        n_samples : int, optional
+            Number of samples per channel to read.  If provided, the call
+            **blocks** until exactly *n_samples* are available — suitable
+            for scripts and notebooks.  If ``None`` (default), drains every
+            sample currently in the buffer without blocking
+            (``READ_ALL_AVAILABLE``) — suitable for acquisition loops.
 
         Returns
         -------
@@ -716,8 +725,8 @@ class DAQHandler:
                 raise ValueError(
                     "No active input task. Call connect() first."
                 )
-            # acquire_base() returns (n_channels, n_samples)
-            raw = self._task_in_obj_active.acquire_base()
+            # acquire() returns (n_channels, n_samples)
+            raw = self._task_in_obj_active.acquire(n_samples=n_samples)
             return raw.T
 
     def read(self) -> np.ndarray:
@@ -1089,7 +1098,7 @@ class DAQHandler:
         with self._lock:
             if self._task_in_obj_active is None:
                 return  # No-op
-            self._task_in_obj_active.acquire_base()
+            self._task_in_obj_active.acquire()
 
     # ------------------------------------------------------------------
     # Context manager

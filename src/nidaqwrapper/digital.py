@@ -111,7 +111,7 @@ class DITask:
     >>> di = DITask(task_name='fast_di', sample_rate=1000)
     >>> di.add_channel('signals', lines='Dev1/port0/line0:7')
     >>> di.start(start_task=True)
-    >>> data = di.read_all_available()
+    >>> data = di.acquire()
     >>> di.clear_task()
     """
 
@@ -267,8 +267,17 @@ class DITask:
             return np.array([data])
         return np.array(data)
 
-    def read_all_available(self) -> np.ndarray:
-        """Read all available samples from the input buffer (clocked mode).
+    def acquire(self, n_samples: int | None = None) -> np.ndarray:
+        """Read samples from the input buffer (clocked mode).
+
+        Parameters
+        ----------
+        n_samples : int, optional
+            Number of samples per channel to read.  If provided, the call
+            **blocks** until exactly *n_samples* are available — suitable
+            for scripts and notebooks.  If ``None`` (default), drains every
+            sample currently in the buffer without blocking
+            (``READ_ALL_AVAILABLE``) — suitable for acquisition loops.
 
         Returns
         -------
@@ -282,14 +291,13 @@ class DITask:
         """
         if self.mode != "clocked":
             raise RuntimeError(
-                "read_all_available() requires clocked mode. "
+                "acquire() requires clocked mode. "
                 "Create DITask with a sample_rate to enable "
                 "continuous reading."
             )
 
-        data = self.task.read(
-            number_of_samples_per_channel=constants.READ_ALL_AVAILABLE
-        )
+        count = constants.READ_ALL_AVAILABLE if n_samples is None else n_samples
+        data = self.task.read(number_of_samples_per_channel=count)
 
         if not data:
             return np.array([]).reshape(0, 0)
@@ -466,7 +474,7 @@ class DITask:
         >>> task.di_channels.add_di_chan("Dev1/port0/line0:3")
         >>> task.timing.cfg_samp_clk_timing(rate=1000)
         >>> di = DITask.from_task(task)
-        >>> data = di.read_all_available()
+        >>> data = di.acquire()
         >>> task.close()  # Caller must close
         """
         if len(task.di_channels) == 0:

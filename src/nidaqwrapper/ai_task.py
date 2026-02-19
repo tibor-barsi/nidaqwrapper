@@ -395,12 +395,17 @@ class AITask:
         if start_task:
             self.task.start()
 
-    def acquire_base(self) -> np.ndarray:
-        """Read all available samples from the hardware buffer.
+    def acquire(self, n_samples: int | None = None) -> np.ndarray:
+        """Read samples from the hardware buffer.
 
-        Drains every sample currently in the on-board FIFO buffer.  The
-        result is always a 2-D array with shape ``(n_channels, n_samples)``,
-        matching nidaqmx's native channel-major layout.
+        Parameters
+        ----------
+        n_samples : int, optional
+            Number of samples per channel to read.  If provided, the call
+            **blocks** until exactly *n_samples* are available — suitable
+            for scripts and notebooks.  If ``None`` (default), drains every
+            sample currently in the buffer without blocking (``READ_ALL_
+            AVAILABLE``) — suitable for acquisition loops.
 
         Returns
         -------
@@ -409,14 +414,9 @@ class AITask:
             channel tasks nidaqmx returns a 1-D list; this method reshapes
             it to ``(1, n_samples)`` so callers always receive a consistent
             shape.
-
-        Notes
-        -----
-        Uses ``number_of_samples_per_channel=-1`` which corresponds to
-        ``nidaqmx.constants.READ_ALL_AVAILABLE`` — drain the full buffer.
         """
-        # -1 == nidaqmx.constants.READ_ALL_AVAILABLE — drain the full buffer
-        raw = self.task.read(number_of_samples_per_channel=-1)
+        count = -1 if n_samples is None else n_samples
+        raw = self.task.read(number_of_samples_per_channel=count)
         data = np.array(raw)
 
         if data.ndim == 1:
@@ -699,7 +699,7 @@ class AITask:
         >>> raw_task.ai_channels.add_ai_voltage_chan("Dev1/ai0")
         >>> raw_task.timing.cfg_samp_clk_timing(rate=25600)
         >>> wrapped = AITask.from_task(raw_task)
-        >>> data = wrapped.acquire_base()
+        >>> data = wrapped.acquire()
         >>> raw_task.close()  # Caller must close the task
         """
         _require_nidaqmx()

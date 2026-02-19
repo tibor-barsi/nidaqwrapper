@@ -989,27 +989,27 @@ class TestAcquireNonBlocking:
 
 
 # ===================================================================
-# 10. read_all_available() for LDAQ Integration
+# 10. acquire() for LDAQ Integration
 # ===================================================================
 
 class TestReadAllAvailable:
-    """Task group 10: read_all_available() for LDAQ integration."""
+    """Task group 10: acquire() for LDAQ integration."""
 
-    def test_read_all_available_transposes(self, DAQHandler, wrapper_module):
-        """10.1 read_all_available() returns (n_samples, n_channels)."""
+    def test_acquire_transposes(self, DAQHandler, wrapper_module):
+        """10.1 acquire() returns (n_samples, n_channels)."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
         w._connected = True
 
-        # Mock the AITask's acquire_base returning (n_channels, n_samples)
+        # Mock the AITask's acquire returning (n_channels, n_samples)
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire_base.return_value = np.array([[1, 2, 3], [4, 5, 6]])
+        mock_ni_task.acquire.return_value = np.array([[1, 2, 3], [4, 5, 6]])
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()
         assert result.shape == (3, 2)  # (n_samples, n_channels)
 
-    def test_read_all_available_empty(self, DAQHandler, wrapper_module):
+    def test_acquire_empty(self, DAQHandler, wrapper_module):
         """10.2 read_all_available() returns empty array when no data."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
@@ -1017,20 +1017,20 @@ class TestReadAllAvailable:
         w._n_channels_in = 2
 
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire_base.return_value = np.empty((2, 0))
+        mock_ni_task.acquire.return_value = np.empty((2, 0))
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()
         assert result.shape == (0, 2)
 
-    def test_read_all_available_no_trigger(self, DAQHandler, wrapper_module):
+    def test_acquire_no_trigger(self, DAQHandler, wrapper_module):
         """10.3 read_all_available() does NOT use pyTrigger."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
         w._connected = True
 
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire_base.return_value = np.array([[1, 2], [3, 4]])
+        mock_ni_task.acquire.return_value = np.array([[1, 2], [3, 4]])
         w._task_in_obj_active = mock_ni_task
 
         # No trigger should be involved
@@ -1038,7 +1038,7 @@ class TestReadAllAvailable:
         result = w.read_all_available()
         assert result.shape == (2, 2)
 
-    def test_read_all_available_single_channel(self, DAQHandler, wrapper_module):
+    def test_acquire_single_channel(self, DAQHandler, wrapper_module):
         """10.4 read_all_available() reshapes single-channel data."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
@@ -1046,8 +1046,8 @@ class TestReadAllAvailable:
         w._n_channels_in = 1
 
         mock_ni_task = MagicMock()
-        # acquire_base returns (1, n_samples) for single channel
-        mock_ni_task.acquire_base.return_value = np.array([[1, 2, 3, 4]])
+        # acquire returns (1, n_samples) for single channel
+        mock_ni_task.acquire.return_value = np.array([[1, 2, 3, 4]])
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()
@@ -1547,7 +1547,7 @@ class TestClearBuffer:
         w._task_in_obj_active = mock_ni_task
 
         w.clear_buffer()
-        mock_ni_task.acquire_base.assert_called_once()
+        mock_ni_task.acquire.assert_called_once()
 
     def test_clear_buffer_no_input_task(self, DAQHandler):
         """17.3 clear_buffer() with no input task is no-op."""
