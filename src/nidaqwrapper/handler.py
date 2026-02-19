@@ -62,18 +62,22 @@ except ImportError:
 class DAQHandler:
     """High-level single-task NI-DAQmx interface.
 
-    Supports NI MAX task names (strings) and programmatic
-    :class:`AITask` / :class:`AOTask` objects.  Provides a
+    Supports NI MAX task names (strings), programmatic
+    :class:`AITask` / :class:`AOTask` objects, and raw
+    ``nidaqmx.task.Task`` objects.  Raw tasks are automatically wrapped
+    via the appropriate ``from_task()`` classmethod.  Provides a
     ``configure → connect → acquire/generate → disconnect`` lifecycle
     with software-triggered acquisition via pyTrigger, continuous signal
     generation, single-sample I/O, auto-reconnection, and thread safety.
 
     Parameters
     ----------
-    task_in : str or AITask, optional
-        Input task — NI MAX name string or :class:`AITask` instance.
-    task_out : str or AOTask, optional
-        Output task — NI MAX name string or :class:`AOTask` instance.
+    task_in : str, AITask, or nidaqmx.task.Task, optional
+        Input task — NI MAX name string, :class:`AITask` instance, or
+        raw ``nidaqmx.task.Task`` object.
+    task_out : str, AOTask, or nidaqmx.task.Task, optional
+        Output task — NI MAX name string, :class:`AOTask` instance, or
+        raw ``nidaqmx.task.Task`` object.
     **kwargs
         Additional keyword arguments forwarded to :meth:`configure`.
         Includes ``acquisition_sleep`` and ``post_trigger_delay``.
@@ -170,20 +174,22 @@ class DAQHandler:
     ) -> None:
         """Configure input, output, and digital tasks.
 
-        Accepts NI MAX task name strings or :class:`AITask` /
-        :class:`AOTask` / :class:`DITask` /
-        :class:`DOTask` objects.  Resets all internal state so the
-        wrapper can be reconfigured without creating a new instance.
+        Accepts NI MAX task name strings, :class:`AITask` /
+        :class:`AOTask` / :class:`DITask` / :class:`DOTask` objects,
+        or raw ``nidaqmx.task.Task`` objects.  Raw tasks are wrapped
+        automatically via the appropriate ``from_task()`` classmethod.
+        Resets all internal state so the wrapper can be reconfigured
+        without creating a new instance.
 
         Parameters
         ----------
-        task_in : str or AITask, optional
+        task_in : str, AITask, or nidaqmx.task.Task, optional
             Analog input task specification.
-        task_out : str or AOTask, optional
+        task_out : str, AOTask, or nidaqmx.task.Task, optional
             Analog output task specification.
-        task_digital_in : str or DITask, optional
+        task_digital_in : str, DITask, or nidaqmx.task.Task, optional
             Digital input task — object or NI MAX name string.
-        task_digital_out : str or DOTask, optional
+        task_digital_out : str, DOTask, or nidaqmx.task.Task, optional
             Digital output task — object or NI MAX name string.
         **kwargs
             ``acquisition_sleep``, ``post_trigger_delay``.
@@ -222,9 +228,27 @@ class DAQHandler:
             self._task_in_name_str = task_in.task_name
             self._task_in_sample_rate = task_in.sample_rate
         elif task_in is not None:
-            raise TypeError(
-                f"task_in must be a string or AITask, got {type(task_in).__name__}"
-            )
+            # Check if it's a raw nidaqmx.task.Task object
+            is_raw_task = False
+            if _NIDAQMX_AVAILABLE:
+                try:
+                    is_raw_task = isinstance(task_in, nidaqmx.task.Task)
+                except TypeError:
+                    # nidaqmx.task.Task is not a valid type (e.g., mocked or unavailable)
+                    pass
+
+            if is_raw_task:
+                # Wrap via AITask.from_task()
+                wrapped_task = AITask.from_task(task_in)
+                self._task_in_is_obj = True
+                self._task_in_obj = wrapped_task
+                self._task_in_name_str = wrapped_task.task_name
+                self._task_in_sample_rate = wrapped_task.sample_rate
+            else:
+                raise TypeError(
+                    f"task_in must be a string, AITask, or nidaqmx.task.Task, "
+                    f"got {type(task_in).__name__}"
+                )
 
         # -- Output task -----------------------------------------------
         self._task_out_is_str = False
@@ -243,9 +267,27 @@ class DAQHandler:
             self._task_out_name_str = task_out.task_name
             self._task_out_sample_rate = task_out.sample_rate
         elif task_out is not None:
-            raise TypeError(
-                f"task_out must be a string or AOTask, got {type(task_out).__name__}"
-            )
+            # Check if it's a raw nidaqmx.task.Task object
+            is_raw_task = False
+            if _NIDAQMX_AVAILABLE:
+                try:
+                    is_raw_task = isinstance(task_out, nidaqmx.task.Task)
+                except TypeError:
+                    # nidaqmx.task.Task is not a valid type (e.g., mocked or unavailable)
+                    pass
+
+            if is_raw_task:
+                # Wrap via AOTask.from_task()
+                wrapped_task = AOTask.from_task(task_out)
+                self._task_out_is_obj = True
+                self._task_out_obj = wrapped_task
+                self._task_out_name_str = wrapped_task.task_name
+                self._task_out_sample_rate = wrapped_task.sample_rate
+            else:
+                raise TypeError(
+                    f"task_out must be a string, AOTask, or nidaqmx.task.Task, "
+                    f"got {type(task_out).__name__}"
+                )
 
         # -- Digital input task ----------------------------------------
         self._task_digital_in_is_str = False
@@ -260,10 +302,25 @@ class DAQHandler:
             self._task_digital_in_is_obj = True
             self._task_digital_in_obj = task_digital_in
         elif task_digital_in is not None:
-            raise TypeError(
-                f"task_digital_in must be a string or DITask, "
-                f"got {type(task_digital_in).__name__}"
-            )
+            # Check if it's a raw nidaqmx.task.Task object
+            is_raw_task = False
+            if _NIDAQMX_AVAILABLE:
+                try:
+                    is_raw_task = isinstance(task_digital_in, nidaqmx.task.Task)
+                except TypeError:
+                    # nidaqmx.task.Task is not a valid type (e.g., mocked or unavailable)
+                    pass
+
+            if is_raw_task:
+                # Wrap via DITask.from_task()
+                wrapped_task = DITask.from_task(task_digital_in)
+                self._task_digital_in_is_obj = True
+                self._task_digital_in_obj = wrapped_task
+            else:
+                raise TypeError(
+                    f"task_digital_in must be a string, DITask, or nidaqmx.task.Task, "
+                    f"got {type(task_digital_in).__name__}"
+                )
 
         # -- Digital output task ---------------------------------------
         self._task_digital_out_is_str = False
@@ -278,10 +335,25 @@ class DAQHandler:
             self._task_digital_out_is_obj = True
             self._task_digital_out_obj = task_digital_out
         elif task_digital_out is not None:
-            raise TypeError(
-                f"task_digital_out must be a string or DOTask, "
-                f"got {type(task_digital_out).__name__}"
-            )
+            # Check if it's a raw nidaqmx.task.Task object
+            is_raw_task = False
+            if _NIDAQMX_AVAILABLE:
+                try:
+                    is_raw_task = isinstance(task_digital_out, nidaqmx.task.Task)
+                except TypeError:
+                    # nidaqmx.task.Task is not a valid type (e.g., mocked or unavailable)
+                    pass
+
+            if is_raw_task:
+                # Wrap via DOTask.from_task()
+                wrapped_task = DOTask.from_task(task_digital_out)
+                self._task_digital_out_is_obj = True
+                self._task_digital_out_obj = wrapped_task
+            else:
+                raise TypeError(
+                    f"task_digital_out must be a string, DOTask, or nidaqmx.task.Task, "
+                    f"got {type(task_digital_out).__name__}"
+                )
 
         # Validate at least one task provided
         has_any = (

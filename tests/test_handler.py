@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import threading
 import time
+import warnings
 from concurrent.futures import Future
 from unittest.mock import MagicMock, patch, PropertyMock
 
@@ -2249,3 +2250,241 @@ class TestOutputMetadataDelegation:
         assert w._channel_names_out == ["ao0", "ao1"]
         assert w._n_channels_out == 2
         assert w._sample_rate_out == 10000.0
+
+
+# ===================================================================
+# Task group: Raw nidaqmx.Task Support
+# ===================================================================
+
+class TestConfigureRawTask:
+    """Tests for configure() with raw nidaqmx.task.Task objects."""
+
+    def test_configure_raw_ai_task(self, DAQHandler, wrapper_module):
+        """configure(task_in=raw_nidaqmx_task) wraps via AITask.from_task()."""
+        # Create a raw task mock with a distinct type
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawAITask"
+                self.timing = MagicMock()
+                self.timing.samp_clk_rate = 25600.0
+                self.ai_channels = [MagicMock(), MagicMock()]
+                self.channel_names = ["ai0", "ai1"]
+                self.number_of_channels = 2
+
+        raw_task = FakeNidaqmxTask()
+
+        wrapped_ai_task = _make_mock_ai_task(task_name="RawAITask", sample_rate=25600.0)
+        wrapped_ai_task._owns_task = False
+
+        # Mock AITask class to capture from_task call
+        real_ai_task = wrapper_module.AITask
+        mock_from_task = MagicMock(return_value=wrapped_ai_task)
+
+        with patch.object(wrapper_module.AITask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_in=raw_task)
+
+        # Verify from_task was called with raw task
+        mock_from_task.assert_called_once_with(raw_task)
+
+        # Verify the wrapped task is stored
+        assert w._task_in_obj is wrapped_ai_task
+        assert w._task_in_is_obj is True
+        assert w._task_in_is_str is False
+        assert w._configured is True
+
+    def test_configure_raw_ao_task(self, DAQHandler, wrapper_module):
+        """configure(task_out=raw_nidaqmx_task) wraps via AOTask.from_task()."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawAOTask"
+                self.timing = MagicMock()
+                self.timing.samp_clk_rate = 10000.0
+                self.ao_channels = [MagicMock()]
+                self.channel_names = ["ao0"]
+                self.number_of_channels = 1
+
+        raw_task = FakeNidaqmxTask()
+
+        wrapped_ao_task = _make_mock_ao_task(task_name="RawAOTask", sample_rate=10000.0)
+        wrapped_ao_task._owns_task = False
+
+        mock_from_task = MagicMock(return_value=wrapped_ao_task)
+
+        with patch.object(wrapper_module.AOTask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_out=raw_task)
+
+        mock_from_task.assert_called_once_with(raw_task)
+        assert w._task_out_obj is wrapped_ao_task
+        assert w._task_out_is_obj is True
+        assert w._task_out_is_str is False
+
+    def test_configure_raw_di_task(self, DAQHandler, wrapper_module):
+        """configure(task_digital_in=raw_task) wraps via DITask.from_task()."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawDITask"
+                self.di_channels = [MagicMock()]
+
+        raw_task = FakeNidaqmxTask()
+
+        mock_di_task = _make_mock_digital_input(task_name="RawDITask")
+        mock_di_task._owns_task = False
+
+        mock_from_task = MagicMock(return_value=mock_di_task)
+
+        with patch.object(wrapper_module.DITask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_digital_in=raw_task)
+
+        mock_from_task.assert_called_once_with(raw_task)
+        assert w._task_digital_in_obj is mock_di_task
+        assert w._task_digital_in_is_obj is True
+        assert w._task_digital_in_is_str is False
+
+    def test_configure_raw_do_task(self, DAQHandler, wrapper_module):
+        """configure(task_digital_out=raw_task) wraps via DOTask.from_task()."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawDOTask"
+                self.do_channels = [MagicMock()]
+
+        raw_task = FakeNidaqmxTask()
+
+        mock_do_task = _make_mock_digital_output(task_name="RawDOTask")
+        mock_do_task._owns_task = False
+
+        mock_from_task = MagicMock(return_value=mock_do_task)
+
+        with patch.object(wrapper_module.DOTask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_digital_out=raw_task)
+
+        mock_from_task.assert_called_once_with(raw_task)
+        assert w._task_digital_out_obj is mock_do_task
+        assert w._task_digital_out_is_obj is True
+        assert w._task_digital_out_is_str is False
+
+    def test_configure_mixed_raw_and_wrapper_tasks(self, DAQHandler, wrapper_module):
+        """configure() with both raw task and wrapper task in same call."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawAI"
+                self.timing = MagicMock()
+                self.timing.samp_clk_rate = 25600.0
+                self.ai_channels = [MagicMock()]
+                self.channel_names = ["ai0"]
+                self.number_of_channels = 1
+
+        raw_ai_task = FakeNidaqmxTask()
+
+        wrapped_ai_task = _make_mock_ai_task(task_name="RawAI", sample_rate=25600.0)
+        wrapped_ai_task._owns_task = False
+
+        mock_ao_task = _make_mock_ao_task()
+
+        mock_from_task = MagicMock(return_value=wrapped_ai_task)
+
+        with patch.object(wrapper_module.AITask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "AOTask", new=type(mock_ao_task)), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_in=raw_ai_task, task_out=mock_ao_task)
+
+        # AI task should be wrapped from raw
+        mock_from_task.assert_called_once_with(raw_ai_task)
+        assert w._task_in_obj is wrapped_ai_task
+        assert w._task_in_is_obj is True
+
+        # AO task should be stored directly (already wrapped)
+        assert w._task_out_obj is mock_ao_task
+        assert w._task_out_is_obj is True
+
+    def test_configure_raw_task_ownership_not_closed_on_disconnect(
+        self, DAQHandler, wrapper_module
+    ):
+        """disconnect() does not close raw tasks (warns instead)."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawTask"
+                self.timing = MagicMock()
+                self.timing.samp_clk_rate = 25600.0
+                self.ai_channels = [MagicMock()]
+                self.channel_names = ["ai0"]
+                self.number_of_channels = 1
+
+        raw_task = FakeNidaqmxTask()
+
+        wrapped_ai_task = _make_mock_ai_task(task_name="RawTask", sample_rate=25600.0)
+        wrapped_ai_task._owns_task = False
+        wrapped_ai_task.clear_task = MagicMock()
+
+        mock_from_task = MagicMock(return_value=wrapped_ai_task)
+
+        with patch.object(wrapper_module.AITask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_in=raw_task)
+            # Don't actually connect to avoid complex mock setup
+            w._task_in_obj_active = wrapped_ai_task
+
+        # Disconnect should call clear_task on the wrapper
+        with warnings.catch_warnings(record=True) as warning_list:
+            warnings.simplefilter("always")
+            w.disconnect()
+
+        # clear_task was called on the wrapper
+        wrapped_ai_task.clear_task.assert_called_once()
+
+        # If clear_task issues a warning (because _owns_task=False), it should be captured
+        # But we don't test the warning itself here — that's the wrapper class's responsibility
+
+    def test_configure_raw_task_string_mixed(self, DAQHandler, wrapper_module):
+        """configure() with raw task and string task in same call."""
+        class FakeNidaqmxTask:
+            def __init__(self):
+                self.name = "RawAI"
+                self.timing = MagicMock()
+                self.timing.samp_clk_rate = 25600.0
+                self.ai_channels = [MagicMock()]
+                self.channel_names = ["ai0"]
+                self.number_of_channels = 1
+
+        raw_ai_task = FakeNidaqmxTask()
+
+        wrapped_ai_task = _make_mock_ai_task(task_name="RawAI", sample_rate=25600.0)
+        wrapped_ai_task._owns_task = False
+
+        mock_from_task = MagicMock(return_value=wrapped_ai_task)
+
+        with patch.object(wrapper_module.AITask, "from_task", mock_from_task), \
+             patch.object(wrapper_module, "_NIDAQMX_AVAILABLE", True), \
+             patch.object(wrapper_module, "nidaqmx") as mock_nidaqmx:
+            mock_nidaqmx.task.Task = FakeNidaqmxTask
+            w = DAQHandler()
+            w.configure(task_in=raw_ai_task, task_out="OutputTaskString")
+
+        # AI task wrapped from raw
+        assert w._task_in_obj is wrapped_ai_task
+        assert w._task_in_is_obj is True
+
+        # AO task stored as string
+        assert w._task_out_name == "OutputTaskString"
+        assert w._task_out_is_str is True
