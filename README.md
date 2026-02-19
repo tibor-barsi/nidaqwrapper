@@ -186,7 +186,7 @@ raw_task.timing.cfg_samp_clk_timing(rate=25600)
 
 wrapped = AITask.from_task(raw_task)
 # Use wrapped task with DAQHandler or read directly
-data = wrapped.acquire_base()  # shape: (n_channels, n_samples)
+data = wrapped.acquire()  # shape: (n_channels, n_samples)
 raw_task.close()  # Caller retains ownership
 ```
 
@@ -225,7 +225,7 @@ The public API uses `(n_samples, n_channels)` for all multi-channel data. Intern
 - `DAQHandler.acquire()` returns `(n_samples, n_channels)` or a dict
 - `DAQHandler.read_all_available()` returns `(n_samples, n_channels)`
 - `DAQHandler.read()` returns `(n_channels,)` -- single sample
-- `AITask.acquire_base()` returns `(n_channels, n_samples)` -- internal format
+- `AITask.acquire()` returns `(n_channels, n_samples)` -- internal format
 - `AOTask.generate(signal)` accepts `(n_samples, n_channels)` or `(n_samples,)`
 
 ## Requirements
