@@ -22,26 +22,6 @@ import pytest
 pytestmark = pytest.mark.simulated
 
 
-@pytest.fixture
-def sim_device_index(simulated_device_name):
-    """Find the device index for SimDev1 in the system device list.
-
-    Returns
-    -------
-    int
-        Index of SimDev1 in nidaqmx.system.System.local().devices.
-    """
-    import nidaqmx.system
-
-    system = nidaqmx.system.System.local()
-    device_names = [d.name for d in system.devices]
-
-    if simulated_device_name not in device_names:
-        pytest.skip(f"Simulated device {simulated_device_name} not found")
-
-    return device_names.index(simulated_device_name)
-
-
 class TestAOTaskSimulated:
     """Full AOTask lifecycle tests with simulated device."""
 
