@@ -47,5 +47,7 @@ dev = ["pytest>=8.0"]
 [tool.pytest.ini_options]
 markers = [
     "hardware: marks tests as requiring NI-DAQmx hardware (deselect with '-m \"not hardware\"')",
+    "simulated: marks tests as requiring NI-DAQmx simulated devices (deselect with '-m \"not simulated\"')",
 ]
+addopts = "-m 'not hardware and not simulated'"
 testpaths = ["tests"]

@@ -221,3 +221,190 @@ def mock_daq_error():
         return error
 
     return _make_error
+
+
+# ===========================================================================
+# Simulated Device Fixtures — Real nidaqmx with simulated hardware
+# ===========================================================================
+
+SIMULATED_DEVICE_NAME = "SimDev1"
+SIMULATED_TASK_NAME = "SimTask1"
+
+SKIP_MSG = (
+    f"Simulated device '{SIMULATED_DEVICE_NAME}' not found. "
+    "Run 'sudo scripts/setup_simulated_devices.sh' to create it. "
+    "See TESTING.md for details."
+)
+
+
+@pytest.fixture(scope="session")
+def simulated_device_name():
+    """Provide the simulated device name if it exists, otherwise skip tests.
+
+    Returns
+    -------
+    str
+        The simulated device name (e.g., "SimDev1").
+
+    Raises
+    ------
+    pytest.skip
+        If the simulated device does not exist.
+    """
+    try:
+        import nidaqmx.system
+
+        devices = [d.name for d in nidaqmx.system.System.local().devices]
+        if SIMULATED_DEVICE_NAME not in devices:
+            pytest.skip(SKIP_MSG)
+        return SIMULATED_DEVICE_NAME
+    except ImportError:
+        pytest.skip("nidaqmx not installed")
+
+
+@pytest.fixture(scope="session")
+def sim_device(simulated_device_name):
+    """Provide the simulated Device object.
+
+    Returns
+    -------
+    nidaqmx.system.Device
+        The simulated device object.
+    """
+    import nidaqmx.system
+
+    system = nidaqmx.system.System.local()
+    for device in system.devices:
+        if device.name == simulated_device_name:
+            return device
+    pytest.skip(SKIP_MSG)
+
+
+@pytest.fixture(scope="session")
+def sim_task_name(simulated_device_name):
+    """Provide the simulated task name if it exists, otherwise skip tests.
+
+    Returns
+    -------
+    str
+        The simulated task name (e.g., "SimTask1").
+
+    Raises
+    ------
+    pytest.skip
+        If the simulated task does not exist.
+    """
+    try:
+        import nidaqmx.system
+
+        tasks = [t._name for t in nidaqmx.system.System.local().tasks]
+        if SIMULATED_TASK_NAME not in tasks:
+            pytest.skip(
+                f"Simulated task '{SIMULATED_TASK_NAME}' not found. "
+                "Run 'sudo scripts/setup_simulated_devices.sh' to create it."
+            )
+        return SIMULATED_TASK_NAME
+    except ImportError:
+        pytest.skip("nidaqmx not installed")
+
+
+@pytest.fixture
+def sim_ai_task(simulated_device_name):
+    """Create an AITask with 2 AI channels on SimDev1 at 10kHz.
+
+    Yields
+    ------
+    AITask
+        Configured AITask instance with 2 voltage channels.
+    """
+    from nidaqwrapper import AITask
+
+    task = AITask("test_sim_ai", sample_rate=10000)
+    try:
+        # Add 2 AI voltage channels (ai0, ai1)
+        task.add_channel(
+            "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+        )
+        task.add_channel(
+            "ai1", device_name=f"{simulated_device_name}/ai1", units="V"
+        )
+        yield task
+    finally:
+        try:
+            task.clear_task()
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def sim_ao_task(simulated_device_name):
+    """Create an AOTask with 1 AO channel on SimDev1 at 10kHz.
+
+    Yields
+    ------
+    AOTask
+        Configured AOTask instance with 1 voltage channel.
+    """
+    from nidaqwrapper import AOTask
+
+    task = AOTask("test_sim_ao", sample_rate=10000)
+    try:
+        # Add 1 AO voltage channel (ao0)
+        task.add_channel(
+            "ao0",
+            device_name=f"{simulated_device_name}/ao0",
+            min_val=-10.0,
+            max_val=10.0,
+        )
+        yield task
+    finally:
+        try:
+            task.clear_task()
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def sim_di_task(simulated_device_name):
+    """Create a DITask with 4 DI lines on SimDev1 in on-demand mode.
+
+    Yields
+    ------
+    DITask
+        Configured DITask instance with 4 digital input lines.
+    """
+    from nidaqwrapper import DITask
+
+    task = DITask("test_sim_di")
+    try:
+        # Add 4 DI lines (port0/line0:3)
+        task.add_channel("di_ch", lines=f"{simulated_device_name}/port0/line0:3")
+        yield task
+    finally:
+        try:
+            task.clear_task()
+        except Exception:
+            pass
+
+
+@pytest.fixture
+def sim_do_task(simulated_device_name):
+    """Create a DOTask with 4 DO lines on SimDev1 in on-demand mode.
+
+    Yields
+    ------
+    DOTask
+        Configured DOTask instance with 4 digital output lines.
+    """
+    from nidaqwrapper import DOTask
+
+    task = DOTask("test_sim_do")
+    try:
+        # Add 4 DO lines (port1/line0:3)
+        task.add_channel("do_ch", lines=f"{simulated_device_name}/port1/line0:3")
+        yield task
+    finally:
+        try:
+            task.clear_task()
+        except Exception:
+            pass
