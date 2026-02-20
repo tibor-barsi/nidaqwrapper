@@ -1,0 +1,463 @@
+"""Simulated device tests for DAQHandler full lifecycle.
+
+All tests run against SimDev1 (PCIe-6361 simulated device) and SimTask1
+(persisted AI task) and are marked with ``@pytest.mark.simulated``.
+
+Run with::
+
+    uv run pytest tests/test_sim_handler.py -v -m simulated
+
+Requirements
+------------
+- SimDev1 must exist (created by scripts/setup_simulated_devices.sh)
+- SimTask1 must exist (4 AI channels on SimDev1/ai0:3, 10kHz, continuous, RSE)
+"""
+
+from __future__ import annotations
+
+import time
+
+import numpy as np
+import pytest
+
+pytestmark = pytest.mark.simulated
+
+
+# ===========================================================================
+# Group 7: DAQHandler Full Lifecycle Simulated Tests
+# ===========================================================================
+
+
+class TestHandlerNIMaxTask:
+    """Validate DAQHandler lifecycle with NI MAX task (SimTask1)."""
+
+    def test_ni_max_task_lifecycle(self, sim_task_name: str) -> None:
+        """Configure DAQHandler with SimTask1, connect, introspect, disconnect.
+
+        Verifies:
+        - connect() returns True
+        - get_channel_names() returns 4 channels
+        - get_sample_rate() returns 10000
+        - read_all_available() returns shape (n, 4)
+        - disconnect() succeeds
+        """
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=sim_task_name)
+
+            result = handler.connect()
+            assert result is True, f"connect() failed for {sim_task_name}"
+
+            # Introspect
+            ch_names = handler.get_channel_names()
+            assert len(ch_names) == 4, f"Expected 4 channels, got {len(ch_names)}"
+
+            sample_rate = handler.get_sample_rate()
+            assert sample_rate == 10000.0, f"Expected 10000 Hz, got {sample_rate}"
+
+            # Let buffer fill, then read
+            time.sleep(0.15)
+            data = handler.read_all_available()
+
+            assert isinstance(data, np.ndarray)
+            assert data.ndim == 2, f"Expected 2D array, got shape {data.shape}"
+            assert data.shape[1] == 4, f"Expected 4 channels, got {data.shape[1]}"
+            assert data.shape[0] > 0, "Expected at least one sample"
+
+        finally:
+            handler.disconnect()
+
+
+class TestHandlerProgrammaticAITask:
+    """Validate DAQHandler with programmatic AITask."""
+
+    def test_programmatic_aitask_lifecycle(
+        self, simulated_device_name: str
+    ) -> None:
+        """Configure DAQHandler with AITask, connect, read, disconnect.
+
+        Creates AITask with 2 channels, configures handler, connects,
+        reads data, and disconnects.
+        """
+        from nidaqwrapper import AITask, DAQHandler
+
+        task = AITask("test_handler_ai", sample_rate=10000)
+        task.add_channel("ai0", device_name=f"{simulated_device_name}/ai0", units="V")
+        task.add_channel("ai1", device_name=f"{simulated_device_name}/ai1", units="V")
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=task)
+
+            result = handler.connect()
+            assert result is True, "connect() should return True"
+
+            # Verify metadata
+            assert handler.get_channel_names() == ["ai0", "ai1"]
+            assert handler.get_sample_rate() == 10000.0
+
+            # Let buffer fill
+            time.sleep(0.15)
+
+            data = handler.read_all_available()
+
+            assert isinstance(data, np.ndarray)
+            assert data.shape[1] == 2, f"Expected 2 channels, got {data.shape[1]}"
+            assert data.shape[0] > 0, "Expected at least one sample"
+
+        finally:
+            handler.disconnect()
+
+
+class TestHandlerRawTaskInjection:
+    """Validate raw nidaqmx.Task injection via from_task()."""
+
+    def test_raw_task_injection(self, simulated_device_name: str) -> None:
+        """Pass raw nidaqmx.Task to configure(), verify it works.
+
+        Creates raw nidaqmx.Task with AI channels, passes to configure(),
+        connects, reads, disconnects.
+        """
+        import nidaqmx
+        from nidaqwrapper import DAQHandler
+
+        # Create raw nidaqmx task
+        raw_task = nidaqmx.Task("test_raw_task")
+        try:
+            # Add 2 AI voltage channels
+            raw_task.ai_channels.add_ai_voltage_chan(
+                f"{simulated_device_name}/ai0:1"
+            )
+            raw_task.timing.cfg_samp_clk_timing(
+                rate=10000,
+                sample_mode=nidaqmx.constants.AcquisitionType.CONTINUOUS,
+            )
+
+            handler = DAQHandler()
+            try:
+                # Pass raw task — should auto-wrap via AITask.from_task()
+                handler.configure(task_in=raw_task)
+
+                result = handler.connect()
+                assert result is True, "connect() should return True for raw task"
+
+                # Let buffer fill
+                time.sleep(0.15)
+
+                data = handler.read_all_available()
+
+                assert isinstance(data, np.ndarray)
+                assert data.ndim == 2
+                # raw_task has 2 channels (ai0:1)
+                assert data.shape[1] == 2, f"Expected 2 channels, got {data.shape[1]}"
+                assert data.shape[0] > 0, "Expected at least one sample"
+
+            finally:
+                handler.disconnect()
+
+        finally:
+            # Raw task cleanup — handler doesn't own it
+            try:
+                raw_task.close()
+            except Exception:
+                pass
+
+
+class TestHandlerTriggeredAcquisition:
+    """Validate set_trigger() and acquire() with pyTrigger."""
+
+    def test_triggered_acquisition(self, simulated_device_name: str) -> None:
+        """Configure trigger, acquire n_samples, verify shape.
+
+        On simulated devices, triggers fire quickly because simulated noise
+        crosses any threshold rapidly. Uses very low trigger level.
+        """
+        pytest.importorskip("pyTrigger", reason="pyTrigger not installed")
+
+        from nidaqwrapper import AITask, DAQHandler
+
+        n_samples = 1000
+
+        task = AITask("test_trigger", sample_rate=10000)
+        task.add_channel("ai0", device_name=f"{simulated_device_name}/ai0", units="V")
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=task)
+            handler.connect()
+
+            # Set trigger with very low level (simulated noise triggers quickly)
+            handler.set_trigger(
+                n_samples=n_samples,
+                trigger_channel=0,
+                trigger_level=0.0,  # Very low to trigger immediately
+                trigger_type="abs",
+            )
+
+            data = handler.acquire()
+
+            assert isinstance(data, np.ndarray)
+            assert data.shape == (n_samples, 1), (
+                f"Expected ({n_samples}, 1), got {data.shape}"
+            )
+
+        finally:
+            handler.disconnect()
+
+    def test_triggered_acquisition_return_dict(
+        self, simulated_device_name: str
+    ) -> None:
+        """acquire(return_dict=True) returns dict with channel names and time."""
+        pytest.importorskip("pyTrigger", reason="pyTrigger not installed")
+
+        from nidaqwrapper import AITask, DAQHandler
+
+        n_samples = 500
+
+        task = AITask("test_trigger_dict", sample_rate=10000)
+        task.add_channel("ai0", device_name=f"{simulated_device_name}/ai0", units="V")
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=task)
+            handler.connect()
+
+            handler.set_trigger(
+                n_samples=n_samples,
+                trigger_channel=0,
+                trigger_level=0.0,
+                trigger_type="abs",
+            )
+
+            data = handler.acquire(return_dict=True)
+
+            assert isinstance(data, dict)
+            assert "time" in data
+            assert "ai0" in data
+            assert isinstance(data["ai0"], np.ndarray)
+            assert len(data["ai0"]) == n_samples
+            assert isinstance(data["time"], np.ndarray)
+            assert len(data["time"]) == n_samples
+
+        finally:
+            handler.disconnect()
+
+
+class TestHandlerSingleSample:
+    """Validate single-sample read()."""
+
+    def test_single_sample_read(self, sim_ai_task) -> None:
+        """read() returns shape (n_channels,) array.
+
+        Uses sim_ai_task fixture (2 channels).
+        """
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=sim_ai_task)
+            handler.connect()
+
+            # Start the task for single-sample reads
+            handler._task_in.start()
+
+            data = handler.read()
+
+            assert isinstance(data, np.ndarray)
+            assert data.ndim == 1, f"Expected 1D array, got shape {data.shape}"
+            assert data.shape[0] == 2, f"Expected 2 values, got {data.shape[0]}"
+
+        finally:
+            handler.disconnect()
+
+
+class TestHandlerAOIntegration:
+    """Validate AO integration with generate() and stop_generation()."""
+
+    def test_ao_integration(self, sim_ai_task, sim_ao_task) -> None:
+        """Configure with AI and AO, generate sine wave, stop generation.
+
+        Uses both sim_ai_task and sim_ao_task fixtures.
+        """
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=sim_ai_task, task_out=sim_ao_task)
+
+            result = handler.connect()
+            assert result is True, "connect() should return True"
+
+            # Generate a 1-second sine wave (10000 samples at 10kHz)
+            t = np.linspace(0, 1, 10000, endpoint=False)
+            signal = 2.0 * np.sin(2 * np.pi * 10 * t)
+
+            handler.generate(signal)
+
+            # Let it run briefly
+            time.sleep(0.2)
+
+            handler.stop_generation()
+
+        finally:
+            handler.disconnect()
+
+    def test_single_sample_write(self, sim_ao_task) -> None:
+        """write() sets output voltage on single channel."""
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_out=sim_ao_task)
+            handler.connect()
+
+            # Write various values — should not raise
+            handler.write(0.0)
+            handler.write(1.5)
+            handler.write(-1.0)
+            handler.write(0.0)  # Reset to zero
+
+        finally:
+            handler.disconnect()
+
+
+class TestHandlerDigitalIntegration:
+    """Validate digital I/O integration with read_digital() and write_digital()."""
+
+    def test_digital_integration(self, sim_di_task, sim_do_task) -> None:
+        """Configure with digital tasks, read and write.
+
+        Uses sim_di_task (4 DI lines) and sim_do_task (4 DO lines) fixtures.
+        """
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_digital_in=sim_di_task, task_digital_out=sim_do_task)
+
+            result = handler.connect()
+            assert result is True, "connect() should return True"
+
+            # Read digital input
+            data = handler.read_digital()
+            assert isinstance(data, np.ndarray)
+            assert data.size == 4, f"Expected 4 values, got {data.size}"
+
+            # Write digital output
+            handler.write_digital([True, False, True, False])
+
+            # No assertion needed — if no exception, operations succeeded
+
+        finally:
+            handler.disconnect()
+
+    def test_digital_read_without_task_raises(self) -> None:
+        """read_digital() raises RuntimeError if no digital input configured."""
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+
+        with pytest.raises(RuntimeError, match="No digital input task configured"):
+            handler.read_digital()
+
+    def test_digital_write_without_task_raises(self) -> None:
+        """write_digital() raises RuntimeError if no digital output configured."""
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+
+        with pytest.raises(RuntimeError, match="No digital output task configured"):
+            handler.write_digital(True)
+
+
+class TestHandlerContextManager:
+    """Validate context manager cleanup."""
+
+    def test_context_manager_normal_exit(self, simulated_device_name: str) -> None:
+        """Resources released on normal with-block exit."""
+        from nidaqwrapper import AITask, DAQHandler
+
+        task_name = "test_ctx_normal"
+
+        with DAQHandler() as handler:
+            task = AITask(task_name, sample_rate=10000)
+            task.add_channel(
+                "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+            )
+
+            handler.configure(task_in=task)
+            handler.connect()
+
+            # Let buffer fill
+            time.sleep(0.1)
+
+            data = handler.read_all_available()
+            assert data.shape[0] > 0
+
+        # After exit, handler should be disconnected
+        # Verify by creating a new task with same name (proves cleanup)
+        new_task = AITask(task_name, sample_rate=10000)
+        try:
+            new_task.add_channel(
+                "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+            )
+            new_task.start(start_task=False)
+        finally:
+            new_task.clear_task()
+
+    def test_context_manager_exception_cleanup(
+        self, simulated_device_name: str
+    ) -> None:
+        """Resources released even when exception occurs in with-block."""
+        from nidaqwrapper import AITask, DAQHandler
+
+        task_name = "test_ctx_exception"
+
+        with pytest.raises(RuntimeError, match="deliberate"):
+            with DAQHandler() as handler:
+                task = AITask(task_name, sample_rate=10000)
+                task.add_channel(
+                    "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+                )
+
+                handler.configure(task_in=task)
+                handler.connect()
+
+                raise RuntimeError("deliberate test exception")
+
+        # After exception, resources should still be released
+        new_task = AITask(task_name, sample_rate=10000)
+        try:
+            new_task.add_channel(
+                "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+            )
+            new_task.start(start_task=False)
+        finally:
+            new_task.clear_task()
+
+
+class TestHandlerBlockingRead:
+    """Validate blocking read_all_available(n_samples)."""
+
+    def test_blocking_read_exact_samples(self, sim_ai_task) -> None:
+        """read_all_available(n_samples) blocks until n_samples available.
+
+        Uses sim_ai_task fixture (2 AI channels at 10kHz).
+        """
+        from nidaqwrapper import DAQHandler
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=sim_ai_task)
+            handler.connect()
+
+            # Blocking read for exactly 500 samples per channel
+            data = handler.read_all_available(n_samples=500)
+
+            assert isinstance(data, np.ndarray)
+            assert data.shape == (500, 2), f"Expected (500, 2), got {data.shape}"
+
+        finally:
+            handler.disconnect()

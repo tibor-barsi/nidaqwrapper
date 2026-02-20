@@ -237,6 +237,20 @@ The public API uses `(n_samples, n_channels)` for all multi-channel data. Intern
 - pyTrigger >= 0.3.0
 - tomli >= 1.0 (Python < 3.11 only; Python 3.11+ uses built-in `tomllib`)
 
+## Testing
+
+nidaqwrapper uses a three-tier test strategy:
+
+| Tier | Command | Requirements |
+|------|---------|-------------|
+| Mocked | `uv run pytest` | None (default) |
+| Simulated | `uv run pytest -m simulated -v` | NI-DAQmx driver + simulated device |
+| Hardware | `uv run pytest -m hardware -v` | Physical NI hardware |
+
+The mocked tier (630 tests) runs by default and requires no NI-DAQmx driver. The simulated tier uses the real driver with simulated devices to catch API contract violations. The hardware tier validates real-world timing and physical signals.
+
+See [TESTING.md](TESTING.md) for detailed setup instructions, troubleshooting, and how to configure simulated devices.
+
 ## License
 
 MIT License -- Copyright (c) 2026 Tibor Barsi and contributors
