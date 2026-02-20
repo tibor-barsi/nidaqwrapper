@@ -309,7 +309,7 @@ def sim_task_name(simulated_device_name):
 
 
 @pytest.fixture
-def sim_ai_task(simulated_device_name):
+def sim_ai_task(sim_device_index):
     """Create an AITask with 2 AI channels on SimDev1 at 10kHz.
 
     Yields
@@ -323,10 +323,10 @@ def sim_ai_task(simulated_device_name):
     try:
         # Add 2 AI voltage channels (ai0, ai1)
         task.add_channel(
-            "ai0", device_name=f"{simulated_device_name}/ai0", units="V"
+            "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
         )
         task.add_channel(
-            "ai1", device_name=f"{simulated_device_name}/ai1", units="V"
+            "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
         )
         yield task
     finally:
@@ -337,7 +337,7 @@ def sim_ai_task(simulated_device_name):
 
 
 @pytest.fixture
-def sim_ao_task(simulated_device_name):
+def sim_ao_task(sim_device_index):
     """Create an AOTask with 1 AO channel on SimDev1 at 10kHz.
 
     Yields
@@ -352,7 +352,8 @@ def sim_ao_task(simulated_device_name):
         # Add 1 AO voltage channel (ao0)
         task.add_channel(
             "ao0",
-            device_name=f"{simulated_device_name}/ao0",
+            device_ind=sim_device_index,
+            channel_ind=0,
             min_val=-10.0,
             max_val=10.0,
         )

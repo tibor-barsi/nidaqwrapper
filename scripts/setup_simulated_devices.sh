@@ -32,6 +32,19 @@ if [[ ! -f "config/simulated_devices.ini" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Resolve venv Python (system python won't have nidaqmx installed)
+# ---------------------------------------------------------------------------
+
+VENV_PYTHON=".venv/bin/python3"
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    echo "ERROR: Virtual environment not found at .venv/bin/python3"
+    echo "Run 'uv sync' first to create the virtual environment."
+    exit 1
+fi
+
+echo "Using venv Python: $(realpath "$VENV_PYTHON")"
+
+# ---------------------------------------------------------------------------
 # Check nidaqmxconfig exists
 # ---------------------------------------------------------------------------
 
@@ -62,7 +75,7 @@ fi
 
 echo ""
 echo "Verifying SimDev1 device..."
-if ! uv run python3 -c "
+if ! "$VENV_PYTHON" -c "
 import nidaqmx.system
 devices = [d.name for d in nidaqmx.system.System.local().devices]
 if 'SimDev1' in devices:
@@ -83,7 +96,7 @@ fi
 
 echo ""
 echo "Creating SimTask1 persisted task (4 AI channels, 10kHz, continuous)..."
-if ! uv run python3 -c "
+if ! "$VENV_PYTHON" -c "
 import nidaqmx
 from nidaqmx.constants import AcquisitionType, TerminalConfiguration
 

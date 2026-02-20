@@ -407,10 +407,18 @@ class DAQHandler:
                         return False
                     self._task_in = loaded
                     self._extract_input_metadata_from_nidaqmx(loaded)
+                    # Wrap in AITask so read_all_available() can use it
+                    try:
+                        loaded.start()
+                        self._task_in_obj_active = AITask.from_task(loaded)
+                    except Exception:
+                        pass  # Wrapping optional — basic connect still works
 
                 elif self._task_in_is_obj:
                     ni_task = self._task_in_obj
-                    ni_task.start(start_task=False)
+                    # Only start if we own the task (not externally-provided)
+                    if ni_task._owns_task:
+                        ni_task.start(start_task=False)
                     self._task_in = ni_task.task
                     self._task_in_obj_active = ni_task
                     self._extract_input_metadata_from_ni_task(ni_task)
@@ -426,7 +434,9 @@ class DAQHandler:
 
                 elif self._task_out_is_obj:
                     ni_task_out = self._task_out_obj
-                    ni_task_out.start(start_task=False)
+                    # Only start if we own the task (not externally-provided)
+                    if ni_task_out._owns_task:
+                        ni_task_out.start(start_task=False)
                     self._task_out = ni_task_out.task
                     self._task_out_obj_active = ni_task_out
                     self._extract_output_metadata_from_ni_task_out(ni_task_out)
@@ -758,6 +768,8 @@ class DAQHandler:
             # a 0-D array.  Reshape to (1,) so callers always receive 1-D output.
             if data.ndim == 0:
                 data = data.reshape((1,))
+            elif data.ndim == 2:
+                data = data.squeeze(axis=1)
             return data
 
     # ------------------------------------------------------------------

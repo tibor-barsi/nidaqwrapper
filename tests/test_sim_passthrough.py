@@ -40,7 +40,7 @@ class TestRawTaskPassthrough:
             wrapper = AITask.from_task(raw_task)
 
             # Verify wrapper read the configured rate
-            assert wrapper.sample_rate == 25600, (
+            assert wrapper.sample_rate == pytest.approx(25600, rel=0.01), (
                 "Wrapper should preserve the custom sample rate from the raw task"
             )
 

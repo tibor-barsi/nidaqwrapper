@@ -138,19 +138,19 @@ class TestDOTaskSimulated:
     def test_clocked_write(self, simulated_device_name: str) -> None:
         """DOTask clocked write_continuous succeeds without error.
 
-        Creates DOTask with sample_rate, adds channels, starts, generates
-        bool array, and writes continuously.
+        Creates DOTask with sample_rate, adds channels, configures timing,
+        then writes continuously (which pre-fills buffer and auto-starts).
         """
         from nidaqwrapper import DOTask
 
         do = DOTask("test_sim_do_clocked", sample_rate=1000)
         try:
-            # Add 4 lines on port1
+            # Add 4 lines on port0 (port1 doesn't support buffered operations)
             do.add_channel(
                 "do_ch",
-                lines=f"{simulated_device_name}/port1/line0:3"
+                lines=f"{simulated_device_name}/port0/line4:7"
             )
-            do.start(start_task=True)
+            do.start(start_task=False)
 
             # Generate 200 samples of bool data (200, 4)
             data = np.random.randint(0, 2, size=(200, 4), dtype=bool)
