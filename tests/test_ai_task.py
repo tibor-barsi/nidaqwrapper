@@ -2087,3 +2087,125 @@ class TestFromTask:
         # clear_task() should close the task
         task.clear_task()
         mt.close.assert_called_once()
+
+
+class TestFromName:
+    """from_name() loads an NI MAX task by name and wraps it as an AITask."""
+
+    def _make_mock_ni_task(self):
+        """Create a mock nidaqmx task with one AI channel."""
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "MaxTask"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+        return mock_ni_task
+
+    def test_loads_and_wraps_successfully(self, mock_system, mock_constants):
+        """from_name() loads the NI MAX task and returns an AITask."""
+        system = mock_system(task_names=[])
+        mock_ni_task = self._make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  return_value=mock_ni_task) as mock_get,
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_name("MaxTask")
+
+        mock_get.assert_called_once_with("MaxTask")
+        assert isinstance(task, AITask)
+        assert task.task is mock_ni_task
+        assert task.task_name == "MaxTask"
+
+    def test_owns_task(self, mock_system, mock_constants):
+        """from_name() sets _owns_task=True so cleanup closes the task."""
+        system = mock_system(task_names=[])
+        mock_ni_task = self._make_mock_ni_task()
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_name("MaxTask")
+
+        assert task._owns_task is True
+
+    def test_task_not_found_raises_keyerror(self, mock_system, mock_constants):
+        """from_name() raises KeyError when task name not in NI MAX."""
+        with (
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  side_effect=KeyError("No task named 'Missing'")),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(KeyError, match="Missing"):
+                AITask.from_name("Missing")
+
+    def test_task_already_loaded_raises_runtime_error(
+        self, mock_system, mock_constants
+    ):
+        """from_name() raises RuntimeError when get_task_by_name returns None."""
+        with (
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  return_value=None),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(RuntimeError, match="already loaded"):
+                AITask.from_name("BusyTask")
+
+    def test_device_disconnected_raises_connection_error(
+        self, mock_system, mock_constants
+    ):
+        """from_name() propagates ConnectionError from get_task_by_name."""
+        with (
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  side_effect=ConnectionError("Device disconnected")),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(ConnectionError, match="disconnected"):
+                AITask.from_name("BadDevice")
+
+    def test_no_ai_channels_raises_value_error(self, mock_system, mock_constants):
+        """from_name() raises ValueError when loaded task has no AI channels."""
+        system = mock_system(task_names=[])
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "ao_only"
+        mock_ni_task.ai_channels = []  # No AI channels
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.get_task_by_name",
+                  return_value=mock_ni_task),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(ValueError, match="no AI channels"):
+                AITask.from_name("ao_only")
+
+    def test_raises_without_nidaqmx(self):
+        """from_name() raises RuntimeError when nidaqmx is unavailable."""
+        with patch("nidaqwrapper.utils._NIDAQMX_AVAILABLE", False):
+            from nidaqwrapper.ai_task import AITask
+            with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
+                AITask.from_name("AnyTask")

@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-from .utils import UNITS, _require_nidaqmx
+from .utils import UNITS, _require_nidaqmx, get_task_by_name
 
 try:
     import nidaqmx
@@ -738,6 +738,54 @@ class AITask:
         # Ownership: this task was NOT created by us
         instance._owns_task = False
 
+        return instance
+
+    @classmethod
+    def from_name(cls, task_name: str) -> AITask:
+        """Load an NI MAX task by name and wrap it as an AITask.
+
+        Looks up the task in NI MAX via :func:`~nidaqwrapper.utils.get_task_by_name`,
+        then wraps it using :meth:`from_task`.  Unlike ``from_task()``, the
+        wrapper takes ownership of the loaded task and will close it on
+        :meth:`clear_task` or ``__exit__``.
+
+        Parameters
+        ----------
+        task_name : str
+            The name of the task as saved in NI MAX.
+
+        Returns
+        -------
+        AITask
+            An :class:`AITask` wrapping the loaded task.
+
+        Raises
+        ------
+        KeyError
+            If no task named ``task_name`` exists in NI MAX.
+        ConnectionError
+            If the device associated with the task is disconnected.
+        RuntimeError
+            If the task is already loaded by another process, or if
+            nidaqmx is not installed.
+        ValueError
+            If the loaded task has no AI channels.
+
+        Examples
+        --------
+        >>> task = AITask.from_name("MyInputTask")
+        >>> task.start()
+        >>> data = task.acquire()
+        >>> task.clear_task()  # Wrapper closes the task
+        """
+        _require_nidaqmx()
+        loaded = get_task_by_name(task_name)
+        if loaded is None:
+            raise RuntimeError(
+                f"Task '{task_name}' is already loaded by another process."
+            )
+        instance = cls.from_task(loaded)
+        instance._owns_task = True
         return instance
 
     def __enter__(self) -> AITask:
