@@ -2,6 +2,7 @@
 
 __version__ = "0.1.0"
 
+from .base_task import BaseTask
 from .utils import (
     UNITS,
     get_connected_devices,
@@ -18,6 +19,7 @@ from .handler import DAQHandler
 
 __all__ = [
     "__version__",
+    "BaseTask",
     "AITask",
     "AOTask",
     "DAQHandler",

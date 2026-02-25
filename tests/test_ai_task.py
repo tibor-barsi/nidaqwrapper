@@ -2113,7 +2113,7 @@ class TestFromName:
         with (
             patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   return_value=mock_ni_task) as mock_get,
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
@@ -2134,7 +2134,7 @@ class TestFromName:
         with (
             patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   return_value=mock_ni_task),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
@@ -2147,7 +2147,7 @@ class TestFromName:
     def test_task_not_found_raises_keyerror(self, mock_system, mock_constants):
         """from_name() raises KeyError when task name not in NI MAX."""
         with (
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   side_effect=KeyError("No task named 'Missing'")),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
@@ -2161,7 +2161,7 @@ class TestFromName:
     ):
         """from_name() raises RuntimeError when get_task_by_name returns None."""
         with (
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   return_value=None),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
@@ -2175,7 +2175,7 @@ class TestFromName:
     ):
         """from_name() propagates ConnectionError from get_task_by_name."""
         with (
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   side_effect=ConnectionError("Device disconnected")),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
@@ -2194,7 +2194,7 @@ class TestFromName:
         with (
             patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
                   return_value=system),
-            patch("nidaqwrapper.ai_task.get_task_by_name",
+            patch("nidaqwrapper.base_task.get_task_by_name",
                   return_value=mock_ni_task),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),

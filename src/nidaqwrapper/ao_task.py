@@ -51,8 +51,10 @@ try:
 except ImportError:
     _NIDAQMX_AVAILABLE = False
 
+from .base_task import BaseTask
 
-class AOTask:
+
+class AOTask(BaseTask):
     """Programmatic analog output task for NI-DAQmx devices.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -76,6 +78,9 @@ class AOTask:
     ValueError
         If ``task_name`` already exists in NI MAX.
     """
+
+    _channel_attr = "ao_channels"
+    _channel_type_label = "AO"
 
     def __init__(
         self,
@@ -117,18 +122,6 @@ class AOTask:
 
         # Track ownership — True when we created the task, False when wrapping external
         self._owns_task = True
-
-    # -- Introspection properties -------------------------------------------
-
-    @property
-    def channel_list(self) -> list[str]:
-        """List of channel names registered with the nidaqmx task."""
-        return list(self.task.channel_names)
-
-    @property
-    def number_of_ch(self) -> int:
-        """Number of channels registered with the nidaqmx task."""
-        return len(self.task.channel_names)
 
     # -- Channel configuration -----------------------------------------------
 
@@ -245,19 +238,7 @@ class AOTask:
         task handle.  The task remains valid and can be reconfigured or
         closed by the caller.
         """
-        # Block start for externally-provided tasks
-        if not self._owns_task:
-            raise RuntimeError(
-                "Cannot start an externally-provided task. "
-                "Start the nidaqmx.Task directly or pass an already-started "
-                "task to from_task()."
-            )
-
-        if not self.task.channel_names:
-            raise ValueError(
-                "Cannot start: no channels have been added to this task. "
-                "Call add_channel() before start()."
-            )
+        self._check_start_preconditions()
 
         self.task.timing.cfg_samp_clk_timing(
             rate=self.sample_rate,
@@ -308,37 +289,6 @@ class AOTask:
             data = signal
 
         self.task.write(data, auto_start=True)
-
-    # -- Cleanup -------------------------------------------------------------
-
-    def clear_task(self) -> None:
-        """Close the nidaqmx task and release hardware resources.
-
-        Safe to call multiple times or when the task was never initiated.
-
-        Notes
-        -----
-        For externally-provided tasks (created via :meth:`from_task`),
-        this method does NOT close the task.  A warning is issued instead,
-        and the caller remains responsible for calling ``task.close()``.
-        """
-        if hasattr(self, "task") and self.task is not None:
-            # Do not close external tasks — user is responsible
-            if not self._owns_task:
-                warnings.warn(
-                    "Task was created externally — not closing. "
-                    "Call task.close() when done.",
-                    stacklevel=2,
-                )
-                self.task = None
-                return
-
-            # Close owned tasks
-            try:
-                self.task.close()
-            except Exception as exc:
-                warnings.warn(str(exc), stacklevel=2)
-            self.task = None
 
     # -- TOML config persistence ---------------------------------------------
 
@@ -580,6 +530,7 @@ class AOTask:
         # Discover system devices (needed for potential device lookups)
         system = nidaqmx.system.System.local()
         instance.device_list = [dev.name for dev in system.devices]
+        instance.device_product_type = [dev.product_type for dev in system.devices]
 
         # Empty channel configs — user configured channels externally
         instance._channel_configs = []
@@ -588,28 +539,3 @@ class AOTask:
         instance._owns_task = False
 
         return instance
-
-    # -- Context manager -----------------------------------------------------
-
-    def __enter__(self) -> AOTask:
-        """Enter the context manager."""
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type | None,
-        exc_val: BaseException | None,
-        exc_tb: object | None,
-    ) -> None:
-        """Exit the context manager, ensuring task cleanup.
-
-        Calls :meth:`clear_task` unconditionally.  If ``clear_task`` raises,
-        a warning is emitted and the exception is swallowed so it does not
-        mask any exception that propagated from the ``with`` block body.
-
-        Returns ``None`` so body exceptions are never suppressed.
-        """
-        try:
-            self.clear_task()
-        except Exception as exc:
-            warnings.warn(str(exc), stacklevel=2)

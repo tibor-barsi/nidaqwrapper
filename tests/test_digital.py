@@ -2550,3 +2550,130 @@ class TestDOTaskFromTask:
 
         assert do.mode == "on_demand"
         assert do.sample_rate is None
+
+
+# ===========================================================================
+# Task Group: from_name() — NI MAX task loading via inherited BaseTask method
+# ===========================================================================
+
+
+class TestFromNameDI:
+    """from_name() loads an NI MAX task by name and wraps it as a DITask."""
+
+    def _make_mock_ni_task(self) -> MagicMock:
+        """Create a mock nidaqmx task with one DI channel."""
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "MaxDITask"
+        mock_ni_task.timing.samp_clk_rate = 1000
+        mock_ch = MagicMock()
+        mock_ch.name = "line0"
+        mock_ni_task.di_channels = [mock_ch]
+        mock_ni_task.channel_names = ["line0"]
+        mock_ni_task.is_task_done.return_value = True
+        return mock_ni_task
+
+    def test_loads_and_wraps_successfully(self, mock_system, mock_constants):
+        """from_name() loads the NI MAX task and returns a DITask."""
+        system = mock_system(task_names=[])
+        mock_ni_task = self._make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.base_task.get_task_by_name",
+                return_value=mock_ni_task,
+            ) as mock_get,
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_name("MaxDITask")
+
+        mock_get.assert_called_once_with("MaxDITask")
+        assert isinstance(task, DITask)
+        assert task.task is mock_ni_task
+        assert task._owns_task is True
+
+    def test_task_not_found_raises_keyerror(self, mock_system, mock_constants):
+        """from_name() raises KeyError when task name is not in NI MAX."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            side_effect=KeyError("No task named 'Missing'"),
+        ):
+            from nidaqwrapper.digital import DITask
+            with pytest.raises(KeyError, match="Missing"):
+                DITask.from_name("Missing")
+
+    def test_task_already_loaded_raises_runtime_error(
+        self, mock_system, mock_constants
+    ):
+        """from_name() raises RuntimeError when get_task_by_name returns None."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            return_value=None,
+        ):
+            from nidaqwrapper.digital import DITask
+            with pytest.raises(RuntimeError, match="already loaded"):
+                DITask.from_name("BusyTask")
+
+
+class TestFromNameDO:
+    """from_name() loads an NI MAX task by name and wraps it as a DOTask."""
+
+    def _make_mock_ni_task(self) -> MagicMock:
+        """Create a mock nidaqmx task with one DO channel."""
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "MaxDOTask"
+        mock_ni_task.timing.samp_clk_rate = 1000
+        mock_ch = MagicMock()
+        mock_ch.name = "line0"
+        mock_ni_task.do_channels = [mock_ch]
+        mock_ni_task.channel_names = ["line0"]
+        mock_ni_task.is_task_done.return_value = True
+        return mock_ni_task
+
+    def test_loads_and_wraps_successfully(self, mock_system, mock_constants):
+        """from_name() loads the NI MAX task and returns a DOTask."""
+        system = mock_system(task_names=[])
+        mock_ni_task = self._make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.base_task.get_task_by_name",
+                return_value=mock_ni_task,
+            ) as mock_get,
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_name("MaxDOTask")
+
+        mock_get.assert_called_once_with("MaxDOTask")
+        assert isinstance(task, DOTask)
+        assert task.task is mock_ni_task
+        assert task._owns_task is True
+
+    def test_task_not_found_raises_keyerror(self, mock_system, mock_constants):
+        """from_name() raises KeyError when task name is not in NI MAX."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            side_effect=KeyError("No task named 'Missing'"),
+        ):
+            from nidaqwrapper.digital import DOTask
+            with pytest.raises(KeyError, match="Missing"):
+                DOTask.from_name("Missing")
+
+    def test_task_already_loaded_raises_runtime_error(
+        self, mock_system, mock_constants
+    ):
+        """from_name() raises RuntimeError when get_task_by_name returns None."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            return_value=None,
+        ):
+            from nidaqwrapper.digital import DOTask
+            with pytest.raises(RuntimeError, match="already loaded"):
+                DOTask.from_name("BusyTask")

@@ -35,6 +35,8 @@ try:
 except ImportError:
     _NIDAQMX_AVAILABLE = False
 
+from .base_task import BaseTask
+
 
 def _expand_port_to_line_range(lines: str) -> str:
     """Expand a port-only spec to an explicit line range.
@@ -74,7 +76,7 @@ def _expand_port_to_line_range(lines: str) -> str:
     return f"{lines}/line0:{n_lines - 1}"
 
 
-class DITask:
+class DITask(BaseTask):
     """Programmatic digital input task supporting on-demand and clocked modes.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -115,6 +117,9 @@ class DITask:
     >>> di.clear_task()
     """
 
+    _channel_attr = "di_channels"
+    _channel_type_label = "DI"
+
     def __init__(self, task_name: str, sample_rate: float | None = None) -> None:
         self.task_name = task_name
         self.sample_rate = sample_rate
@@ -142,18 +147,6 @@ class DITask:
 
         # Track ownership — False when task is externally provided
         self._owns_task: bool = True
-
-    # -- Introspection properties -------------------------------------------
-
-    @property
-    def channel_list(self) -> list[str]:
-        """List of channel names registered with the nidaqmx task."""
-        return list(self.task.channel_names)
-
-    @property
-    def number_of_ch(self) -> int:
-        """Number of channels registered with the nidaqmx task."""
-        return len(self.task.channel_names)
 
     # -- Channel configuration -----------------------------------------------
 
@@ -231,17 +224,7 @@ class DITask:
         RuntimeError
             If this task was created via :meth:`from_task` (externally provided).
         """
-        if not self._owns_task:
-            raise RuntimeError(
-                "Cannot start an externally-provided task. "
-                "Start the nidaqmx.Task directly or pass an already-started task to from_task()."
-            )
-
-        if not self.task.channel_names:
-            raise ValueError(
-                "Cannot start: no channels have been added to this task. "
-                "Call add_channel() before start()."
-            )
+        self._check_start_preconditions()
 
         if self.mode == "clocked":
             self.task.timing.cfg_samp_clk_timing(
@@ -309,35 +292,6 @@ class DITask:
         if arr.ndim == 1:
             return arr.reshape(-1, 1)
         return arr.T
-
-    # -- Cleanup -------------------------------------------------------------
-
-    def clear_task(self) -> None:
-        """Close the underlying nidaqmx task and release hardware resources.
-
-        Safe to call multiple times or when no task has been initiated.
-
-        Notes
-        -----
-        If this task was created via :meth:`from_task`, the underlying
-        nidaqmx.Task is NOT closed. The caller retains ownership and must
-        close it manually when done.
-        """
-        if hasattr(self, "task") and self.task is not None:
-            if not self._owns_task:
-                warnings.warn(
-                    "Task was created externally — not closing. "
-                    "Call task.close() when done.",
-                    stacklevel=2,
-                )
-                self.task = None
-                return
-
-            try:
-                self.task.close()
-            except Exception as exc:
-                warnings.warn(str(exc), stacklevel=2)
-            self.task = None
 
     # -- TOML config persistence ---------------------------------------------
 
@@ -522,18 +476,8 @@ class DITask:
 
         return instance
 
-    # -- Context manager -----------------------------------------------------
 
-    def __enter__(self) -> DITask:
-        """Enter the context manager."""
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit the context manager, calling clear_task() unconditionally."""
-        self.clear_task()
-
-
-class DOTask:
+class DOTask(BaseTask):
     """Programmatic digital output task supporting on-demand and clocked modes.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -574,6 +518,9 @@ class DOTask:
     >>> do.clear_task()
     """
 
+    _channel_attr = "do_channels"
+    _channel_type_label = "DO"
+
     def __init__(self, task_name: str, sample_rate: float | None = None) -> None:
         self.task_name = task_name
         self.sample_rate = sample_rate
@@ -597,18 +544,6 @@ class DOTask:
 
         # Track ownership — False when task is externally provided
         self._owns_task: bool = True
-
-    # -- Introspection properties -------------------------------------------
-
-    @property
-    def channel_list(self) -> list[str]:
-        """List of channel names registered with the nidaqmx task."""
-        return list(self.task.channel_names)
-
-    @property
-    def number_of_ch(self) -> int:
-        """Number of channels registered with the nidaqmx task."""
-        return len(self.task.channel_names)
 
     # -- Channel configuration -----------------------------------------------
 
@@ -686,17 +621,7 @@ class DOTask:
         RuntimeError
             If this task was created via :meth:`from_task` (externally provided).
         """
-        if not self._owns_task:
-            raise RuntimeError(
-                "Cannot start an externally-provided task. "
-                "Start the nidaqmx.Task directly or pass an already-started task to from_task()."
-            )
-
-        if not self.task.channel_names:
-            raise ValueError(
-                "Cannot start: no channels have been added to this task. "
-                "Call add_channel() before start()."
-            )
+        self._check_start_preconditions()
 
         if self.mode == "clocked":
             self.task.timing.cfg_samp_clk_timing(
@@ -755,35 +680,6 @@ class DOTask:
             write_data = [bool(v) for v in data]
 
         self.task.write(write_data, auto_start=True)
-
-    # -- Cleanup -------------------------------------------------------------
-
-    def clear_task(self) -> None:
-        """Close the underlying nidaqmx task and release hardware resources.
-
-        Safe to call multiple times or when no task has been initiated.
-
-        Notes
-        -----
-        If this task was created via :meth:`from_task`, the underlying
-        nidaqmx.Task is NOT closed. The caller retains ownership and must
-        close it manually when done.
-        """
-        if hasattr(self, "task") and self.task is not None:
-            if not self._owns_task:
-                warnings.warn(
-                    "Task was created externally — not closing. "
-                    "Call task.close() when done.",
-                    stacklevel=2,
-                )
-                self.task = None
-                return
-
-            try:
-                self.task.close()
-            except Exception as exc:
-                warnings.warn(str(exc), stacklevel=2)
-            self.task = None
 
     # -- TOML config persistence ---------------------------------------------
 
@@ -967,13 +863,3 @@ class DOTask:
         instance._owns_task = False
 
         return instance
-
-    # -- Context manager -----------------------------------------------------
-
-    def __enter__(self) -> DOTask:
-        """Enter the context manager."""
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Exit the context manager, calling clear_task() unconditionally."""
-        self.clear_task()

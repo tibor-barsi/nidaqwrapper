@@ -26,7 +26,8 @@ from typing import Any
 
 import numpy as np
 
-from .utils import UNITS, _require_nidaqmx, get_task_by_name
+from .base_task import BaseTask
+from .utils import UNITS, _require_nidaqmx
 
 try:
     import nidaqmx
@@ -37,7 +38,7 @@ except ImportError:
     _NIDAQMX_AVAILABLE = False
 
 
-class AITask:
+class AITask(BaseTask):
     """Programmatic analog input task for NI-DAQmx devices.
 
     The nidaqmx hardware task is created immediately at construction.
@@ -68,6 +69,9 @@ class AITask:
     ...                  units="g")
     >>> task.start()
     """
+
+    _channel_attr = "ai_channels"
+    _channel_type_label = "AI"
 
     def __init__(
         self,
@@ -106,18 +110,6 @@ class AITask:
         # Ownership flag: True when this AITask created the nidaqmx.Task,
         # False when wrapping an externally-provided task via from_task().
         self._owns_task = True
-
-    # -- Introspection properties -------------------------------------------
-
-    @property
-    def channel_list(self) -> list[str]:
-        """List of channel names registered with the nidaqmx task."""
-        return list(self.task.channel_names)
-
-    @property
-    def number_of_ch(self) -> int:
-        """Number of channels registered with the nidaqmx task."""
-        return len(self.task.channel_names)
 
     # -- Channel configuration -----------------------------------------------
 
@@ -365,18 +357,7 @@ class AITask:
         task handle.  The task remains valid and can be reconfigured or
         closed by the caller.
         """
-        if not self._owns_task:
-            raise RuntimeError(
-                "Cannot start an externally-provided task. "
-                "Start the nidaqmx.Task directly or pass an already-started "
-                "task to from_task()."
-            )
-
-        if not self.task.channel_names:
-            raise ValueError(
-                "Cannot start: no channels have been added to this task. "
-                "Call add_channel() before start()."
-            )
+        self._check_start_preconditions()
 
         self.task.timing.cfg_samp_clk_timing(
             rate=self.sample_rate,
@@ -424,37 +405,6 @@ class AITask:
             data = data.reshape(1, -1)
 
         return data
-
-    def clear_task(self) -> None:
-        """Release the hardware task handle.
-
-        Closes the underlying ``nidaqmx.task.Task`` and sets ``self.task``
-        to ``None``.  Safe to call on an already-cleared task or multiple
-        times.
-
-        Notes
-        -----
-        When this task was created via :meth:`from_task`, the nidaqmx task
-        is NOT closed — the caller retains ownership and must call
-        ``task.close()`` when done.  A warning is issued as a reminder.
-        """
-        if hasattr(self, "task") and self.task is not None:
-            # If we don't own the task, skip close and warn the user
-            if not self._owns_task:
-                warnings.warn(
-                    "Task was created externally — not closing. "
-                    "Call task.close() when done.",
-                    stacklevel=2,
-                )
-                self.task = None
-                return
-
-            # Normal path: we own the task, close it
-            try:
-                self.task.close()
-            except Exception as exc:
-                warnings.warn(str(exc), stacklevel=2)
-            self.task = None
 
     def save(self, clear_task: bool = True) -> None:
         """Save the task to NI MAX.
@@ -740,73 +690,3 @@ class AITask:
 
         return instance
 
-    @classmethod
-    def from_name(cls, task_name: str) -> AITask:
-        """Load an NI MAX task by name and wrap it as an AITask.
-
-        Looks up the task in NI MAX via :func:`~nidaqwrapper.utils.get_task_by_name`,
-        then wraps it using :meth:`from_task`.  Unlike ``from_task()``, the
-        wrapper takes ownership of the loaded task and will close it on
-        :meth:`clear_task` or ``__exit__``.
-
-        Parameters
-        ----------
-        task_name : str
-            The name of the task as saved in NI MAX.
-
-        Returns
-        -------
-        AITask
-            An :class:`AITask` wrapping the loaded task.
-
-        Raises
-        ------
-        KeyError
-            If no task named ``task_name`` exists in NI MAX.
-        ConnectionError
-            If the device associated with the task is disconnected.
-        RuntimeError
-            If the task is already loaded by another process, or if
-            nidaqmx is not installed.
-        ValueError
-            If the loaded task has no AI channels.
-
-        Examples
-        --------
-        >>> task = AITask.from_name("MyInputTask")
-        >>> task.start()
-        >>> data = task.acquire()
-        >>> task.clear_task()  # Wrapper closes the task
-        """
-        _require_nidaqmx()
-        loaded = get_task_by_name(task_name)
-        if loaded is None:
-            raise RuntimeError(
-                f"Task '{task_name}' is already loaded by another process."
-            )
-        instance = cls.from_task(loaded)
-        instance._owns_task = True
-        return instance
-
-    def __enter__(self) -> AITask:
-        """Enter the runtime context; return ``self``."""
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type | None,
-        exc_val: BaseException | None,
-        exc_tb: object | None,
-    ) -> None:
-        """Exit the runtime context, releasing hardware resources.
-
-        Calls :meth:`clear_task` unconditionally.  If ``clear_task`` raises,
-        a warning is emitted and the exception is swallowed so it does not
-        mask any exception that propagated from the ``with`` block body.
-
-        Returns ``None`` so body exceptions are never suppressed.
-        """
-        try:
-            self.clear_task()
-        except Exception as exc:
-            warnings.warn(str(exc), stacklevel=2)

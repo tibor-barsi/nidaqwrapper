@@ -1573,3 +1573,72 @@ class TestFromTask:
             task = AOTask.from_task(external)
 
         assert task.number_of_ch == 3
+
+
+# ===========================================================================
+# Task Group: from_name() — NI MAX task loading via inherited BaseTask method
+# ===========================================================================
+
+
+class TestFromName:
+    """from_name() loads an NI MAX task by name and wraps it as an AOTask."""
+
+    def _make_mock_ni_task(self) -> MagicMock:
+        """Create a mock nidaqmx task with one AO channel."""
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "MaxAOTask"
+        mock_ni_task.timing.samp_clk_rate = 10000
+        mock_ni_task.timing.samp_quant_samp_per_chan = 50000
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+        mock_ch = MagicMock()
+        mock_ch.name = "ao0"
+        mock_ni_task.ao_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ao0"]
+        mock_ni_task.is_task_done.return_value = True
+        return mock_ni_task
+
+    def test_loads_and_wraps_successfully(self, mock_system, mock_constants):
+        """from_name() loads the NI MAX task and returns an AOTask."""
+        system = mock_system(task_names=[])
+        mock_ni_task = self._make_mock_ni_task()
+
+        with (
+            patch(
+                "nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch(
+                "nidaqwrapper.base_task.get_task_by_name",
+                return_value=mock_ni_task,
+            ) as mock_get,
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_name("MaxAOTask")
+
+        mock_get.assert_called_once_with("MaxAOTask")
+        assert isinstance(task, AOTask)
+        assert task.task is mock_ni_task
+        assert task._owns_task is True
+
+    def test_task_not_found_raises_keyerror(self, mock_system, mock_constants):
+        """from_name() raises KeyError when task name is not in NI MAX."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            side_effect=KeyError("No task named 'Missing'"),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            with pytest.raises(KeyError, match="Missing"):
+                AOTask.from_name("Missing")
+
+    def test_task_already_loaded_raises_runtime_error(
+        self, mock_system, mock_constants
+    ):
+        """from_name() raises RuntimeError when get_task_by_name returns None."""
+        with patch(
+            "nidaqwrapper.base_task.get_task_by_name",
+            return_value=None,
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            with pytest.raises(RuntimeError, match="already loaded"):
+                AOTask.from_name("BusyTask")
