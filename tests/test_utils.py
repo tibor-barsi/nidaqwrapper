@@ -16,7 +16,7 @@ See agent note: .claude-notes/agent-notes/units-nidaqmx-compat.md
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -375,3 +375,188 @@ class TestGetConnectedDevices:
 
             with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
                 get_connected_devices()
+
+
+# ---------------------------------------------------------------------------
+# Helper for system_info mock devices
+# ---------------------------------------------------------------------------
+
+def _make_phys_chan(name: str) -> MagicMock:
+    """Create a mock PhysicalChannel with a .name attribute."""
+    chan = MagicMock()
+    chan.name = name
+    return chan
+
+
+def _make_rich_device(
+    name: str,
+    product_type: str,
+    serial_num: int,
+    ai_chans: list[str] | None = None,
+    ao_chans: list[str] | None = None,
+) -> MagicMock:
+    """Create a mock device with serial number and physical channels."""
+    dev = MagicMock()
+    dev.name = name
+    dev.product_type = product_type
+    dev.dev_serial_num = serial_num
+    dev.ai_physical_chans = [_make_phys_chan(c) for c in (ai_chans or [])]
+    dev.ao_physical_chans = [_make_phys_chan(c) for c in (ao_chans or [])]
+    return dev
+
+
+def _make_rich_system(devices=None, task_names=None):
+    """Create a mock system with rich device info for system_info() tests."""
+    system = MagicMock()
+    system.devices = devices or []
+
+    tasks_collection = MagicMock()
+    tasks_collection.task_names = task_names or []
+    system.tasks = tasks_collection
+
+    return system
+
+
+class TestSystemInfo:
+    """Tests for system_info() function."""
+
+    def test_returns_dict(self):
+        """system_info() returns a dict."""
+        system = _make_rich_system()
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            result = system_info()
+            assert isinstance(result, dict)
+
+    def test_has_devices_and_tasks_keys(self):
+        """Returned dict has exactly 'devices' and 'tasks' keys."""
+        system = _make_rich_system()
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            result = system_info()
+            assert set(result.keys()) == {"devices", "tasks"}
+
+    def test_device_dict_keys(self):
+        """Each device dict has expected keys."""
+        dev = _make_rich_device(
+            "Dev1", "PCIe-6320", 0x01B4C8A0,
+            ai_chans=["Dev1/ai0"], ao_chans=["Dev1/ao0"],
+        )
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            result = system_info()
+            device = result["devices"][0]
+            assert set(device.keys()) == {
+                "name", "product_type", "serial_number",
+                "ai_channels", "ao_channels",
+            }
+
+    def test_device_name_and_product_type(self):
+        """Device name and product_type are correctly populated."""
+        dev = _make_rich_device("cDAQ1Mod1", "NI 9234", 0xABCD)
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            device = system_info()["devices"][0]
+            assert device["name"] == "cDAQ1Mod1"
+            assert device["product_type"] == "NI 9234"
+
+    def test_serial_number_is_hex_string(self):
+        """Serial number is returned as a hex string."""
+        dev = _make_rich_device("Dev1", "PCIe-6320", 0x01B4C8A0)
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            serial = system_info()["devices"][0]["serial_number"]
+            assert serial == "0x1b4c8a0"
+            assert isinstance(serial, str)
+
+    def test_ai_channels_stripped_to_local_name(self):
+        """AI channel names are stripped of device prefix."""
+        dev = _make_rich_device(
+            "Dev1", "PCIe-6320", 0x1234,
+            ai_chans=["Dev1/ai0", "Dev1/ai1", "Dev1/ai2"],
+        )
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            channels = system_info()["devices"][0]["ai_channels"]
+            assert channels == ["ai0", "ai1", "ai2"]
+
+    def test_ao_channels_stripped_to_local_name(self):
+        """AO channel names are stripped of device prefix."""
+        dev = _make_rich_device(
+            "Dev1", "PCIe-6320", 0x1234,
+            ao_chans=["Dev1/ao0", "Dev1/ao1"],
+        )
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            channels = system_info()["devices"][0]["ao_channels"]
+            assert channels == ["ao0", "ao1"]
+
+    def test_device_with_no_channels(self):
+        """Device with no AI or AO channels returns empty lists."""
+        dev = _make_rich_device("Dev1", "NI 9401", 0x5678)
+        system = _make_rich_system(devices=[dev])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            device = system_info()["devices"][0]
+            assert device["ai_channels"] == []
+            assert device["ao_channels"] == []
+
+    def test_multiple_devices(self):
+        """system_info() returns info for multiple devices."""
+        devices = [
+            _make_rich_device(
+                "cDAQ1Mod1", "NI 9234", 0xAAAA,
+                ai_chans=["cDAQ1Mod1/ai0", "cDAQ1Mod1/ai1"],
+            ),
+            _make_rich_device(
+                "cDAQ1Mod2", "NI 9263", 0xBBBB,
+                ao_chans=["cDAQ1Mod2/ao0"],
+            ),
+        ]
+        system = _make_rich_system(devices=devices)
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            result = system_info()
+            assert len(result["devices"]) == 2
+            assert result["devices"][0]["name"] == "cDAQ1Mod1"
+            assert result["devices"][1]["name"] == "cDAQ1Mod2"
+
+    def test_tasks_populated(self):
+        """Tasks list contains saved NI MAX task names."""
+        system = _make_rich_system(task_names=["MyInput", "MyOutput"])
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            assert system_info()["tasks"] == ["MyInput", "MyOutput"]
+
+    def test_empty_system(self):
+        """system_info() returns empty lists when no devices or tasks exist."""
+        system = _make_rich_system()
+        with patch("nidaqmx.system.System.local", return_value=system):
+            from nidaqwrapper.utils import system_info
+
+            result = system_info()
+            assert result["devices"] == []
+            assert result["tasks"] == []
+
+    def test_raises_without_nidaqmx(self):
+        """system_info() raises RuntimeError when nidaqmx is unavailable."""
+        with patch("nidaqwrapper.utils._NIDAQMX_AVAILABLE", False):
+            from nidaqwrapper.utils import system_info
+
+            with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
+                system_info()

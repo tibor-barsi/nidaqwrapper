@@ -8,6 +8,7 @@ from .utils import (
     get_task_by_name,
     list_devices,
     list_tasks,
+    system_info,
 )
 from .multi_handler import MultiHandler
 from .digital import DITask, DOTask
@@ -28,4 +29,5 @@ __all__ = [
     "get_task_by_name",
     "list_devices",
     "list_tasks",
+    "system_info",
 ]

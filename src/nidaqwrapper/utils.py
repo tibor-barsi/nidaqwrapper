@@ -79,6 +79,58 @@ def _require_nidaqmx() -> None:
 # ---------------------------------------------------------------------------
 
 
+def system_info() -> dict[str, Any]:
+    """Return NI system discovery information.
+
+    Aggregates connected device details and saved NI MAX task names
+    into a single dict for convenient discovery in notebooks and scripts.
+
+    Returns
+    -------
+    dict[str, Any]
+        A dict with two keys:
+
+        - ``"devices"`` — list of dicts, one per connected device:
+            - ``"name"`` — device identifier (e.g., ``"Dev1"``)
+            - ``"product_type"`` — product model (e.g., ``"PCIe-6320"``)
+            - ``"serial_number"`` — hex serial string (e.g., ``"0x1b4c8a0"``)
+            - ``"ai_channels"`` — analog input channel names (e.g., ``["ai0", "ai1"]``)
+            - ``"ao_channels"`` — analog output channel names (e.g., ``["ao0"]``)
+        - ``"tasks"`` — list of NI MAX saved task name strings
+
+    Raises
+    ------
+    RuntimeError
+        If nidaqmx is not installed or NI-DAQmx drivers are unavailable.
+
+    Examples
+    --------
+    >>> info = system_info()
+    >>> info["devices"][0]["name"]
+    'Dev1'
+    >>> info["tasks"]
+    ['MyInputTask', 'MyOutputTask']
+    """
+    _require_nidaqmx()
+    system = nidaqmx.system.System.local()
+
+    devices = []
+    for dev in system.devices:
+        devices.append({
+            "name": dev.name,
+            "product_type": dev.product_type,
+            "serial_number": hex(dev.dev_serial_num),
+            "ai_channels": [
+                ch.name.split("/")[-1] for ch in dev.ai_physical_chans
+            ],
+            "ao_channels": [
+                ch.name.split("/")[-1] for ch in dev.ao_physical_chans
+            ],
+        })
+
+    return {"devices": devices, "tasks": list(system.tasks.task_names)}
+
+
 def list_tasks() -> list[str]:
     """List all tasks saved in NI MAX.
 
