@@ -44,7 +44,7 @@ class TestMultiHandlerBasics:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task.start(start_task=False)
+            ai_task.configure()
 
             # Configure MultiHandler with the underlying nidaqmx task
             handler = MultiHandler()
@@ -109,7 +109,7 @@ class TestMultiHandlerBasics:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task1.start(start_task=False)
+            ai_task1.configure()
 
             # Configure second task: ai2, ai3
             ai_task2.add_channel(
@@ -128,7 +128,7 @@ class TestMultiHandlerBasics:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task2.start(start_task=False)
+            ai_task2.configure()
 
             # Configure MultiHandler with both tasks
             handler = MultiHandler()
@@ -171,7 +171,7 @@ class TestMultiHandlerBasics:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task.start(start_task=False)
+            ai_task.configure()
 
             # Configure MultiHandler
             handler = MultiHandler()
@@ -207,7 +207,7 @@ class TestMultiHandlerSampleRateMismatch:
                 channel_ind=0,
                 units="V",
             )
-            ai_task1.start(start_task=False)
+            ai_task1.configure()
 
             ai_task2.add_channel(
                 "ai1",
@@ -215,7 +215,7 @@ class TestMultiHandlerSampleRateMismatch:
                 channel_ind=1,
                 units="V",
             )
-            ai_task2.start(start_task=False)
+            ai_task2.configure()
 
             # Configure should fail due to sample rate mismatch
             handler = MultiHandler()

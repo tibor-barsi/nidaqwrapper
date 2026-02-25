@@ -43,8 +43,8 @@ class AITask(BaseTask):
 
     The nidaqmx hardware task is created immediately at construction.
     Channels are added via :meth:`add_channel` which delegates directly
-    to the nidaqmx task.  Call :meth:`start` to configure timing and
-    optionally start acquisition.
+    to the nidaqmx task.  Call :meth:`configure` to set up timing,
+    then :meth:`start` to begin acquisition.
 
     Parameters
     ----------
@@ -328,19 +328,12 @@ class AITask(BaseTask):
 
     # -- Task lifecycle ------------------------------------------------------
 
-    def start(self, start_task: bool = False) -> None:
-        """Configure timing and optionally start acquisition.
+    def configure(self) -> None:
+        """Configure sample-clock timing for continuous acquisition.
 
-        Configures the sample-clock timing on the nidaqmx task, validates
-        that the driver accepted the requested sample rate, and optionally
-        starts the task.
-
-        Parameters
-        ----------
-        start_task : bool, optional
-            If ``True``, call ``task.start()`` after configuration.
-            Default is ``False`` — the caller is responsible for starting
-            (e.g. via hardware trigger or explicit ``task.start()``).
+        Sets up the sample-clock timing on the nidaqmx task and validates
+        that the driver accepted the requested sample rate.  Call
+        :meth:`start` afterwards to begin acquisition.
 
         Raises
         ------
@@ -350,12 +343,6 @@ class AITask(BaseTask):
         RuntimeError
             If this task was created via :meth:`from_task` (timing must
             be configured on the nidaqmx task before wrapping).
-
-        Notes
-        -----
-        Unlike the old ``initiate()``, a rate mismatch does NOT close the
-        task handle.  The task remains valid and can be reconfigured or
-        closed by the caller.
         """
         self._check_start_preconditions()
 
@@ -372,9 +359,6 @@ class AITask(BaseTask):
                 f"device. The driver coerced it to {actual_rate} Hz. "
                 "Use a rate that the device supports."
             )
-
-        if start_task:
-            self.task.start()
 
     def acquire(self, n_samples: int | None = None) -> np.ndarray:
         """Read samples from the hardware buffer.
@@ -617,9 +601,9 @@ class AITask(BaseTask):
         advanced users who need to configure task properties not exposed by
         the wrapper API.
 
-        When wrapping an external task, :meth:`add_channel` and :meth:`start`
-        are blocked — the caller is responsible for configuring and starting
-        the task before or after wrapping it.  :meth:`clear_task` and
+        When wrapping an external task, :meth:`add_channel`, :meth:`configure`,
+        and :meth:`start` are blocked — the caller is responsible for
+        configuring and starting the task before or after wrapping it.  :meth:`clear_task` and
         ``__exit__`` will NOT close the task; the caller must call
         ``task.close()`` when done.
 

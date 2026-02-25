@@ -43,7 +43,7 @@ class TestAITaskConfigRoundTrip:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task.start(start_task=False)
+            ai_task.configure()
 
             # Save config
             config_path = tmp_path / "test_ai_config.toml"
@@ -106,7 +106,7 @@ class TestAITaskConfigRoundTrip:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ai_task_orig.start(start_task=False)
+            ai_task_orig.configure()
 
             # Save config
             config_path = tmp_path / "round_trip.toml"
@@ -130,8 +130,9 @@ class TestAITaskConfigRoundTrip:
                     "Channel count should match original"
                 )
 
-                # Start the loaded task
-                ai_task_loaded.start(start_task=True)
+                # Configure and start the loaded task
+                ai_task_loaded.configure()
+                ai_task_loaded.start()
 
                 # Acquire data
                 data = ai_task_loaded.acquire(n_samples=50)
@@ -167,7 +168,7 @@ class TestAOTaskConfigRoundTrip:
                 min_val=-5.0,
                 max_val=5.0,
             )
-            ao_task.start(start_task=False)
+            ao_task.configure()
 
             # Save config
             config_path = tmp_path / "test_ao_config.toml"
@@ -207,7 +208,7 @@ class TestAOTaskConfigRoundTrip:
                 min_val=-10.0,
                 max_val=10.0,
             )
-            ao_task_orig.start(start_task=False)
+            ao_task_orig.configure()
 
             # Save config
             config_path = tmp_path / "ao_round_trip.toml"

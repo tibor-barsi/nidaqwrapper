@@ -416,9 +416,9 @@ class DAQHandler:
 
                 elif self._task_in_is_obj:
                     ni_task = self._task_in_obj
-                    # Only start if we own the task (not externally-provided)
+                    # Only configure if we own the task (not externally-provided)
                     if ni_task._owns_task:
-                        ni_task.start(start_task=False)
+                        ni_task.configure()
                     self._task_in = ni_task.task
                     self._task_in_obj_active = ni_task
                     self._extract_input_metadata_from_ni_task(ni_task)
@@ -434,9 +434,9 @@ class DAQHandler:
 
                 elif self._task_out_is_obj:
                     ni_task_out = self._task_out_obj
-                    # Only start if we own the task (not externally-provided)
+                    # Only configure if we own the task (not externally-provided)
                     if ni_task_out._owns_task:
-                        ni_task_out.start(start_task=False)
+                        ni_task_out.configure()
                     self._task_out = ni_task_out.task
                     self._task_out_obj_active = ni_task_out
                     self._extract_output_metadata_from_ni_task_out(ni_task_out)
@@ -450,7 +450,7 @@ class DAQHandler:
 
                 elif self._task_digital_in_is_obj:
                     try:
-                        self._task_digital_in_obj.start()
+                        self._task_digital_in_obj.configure()
                         self._task_digital_in = self._task_digital_in_obj
                     except Exception as exc:
                         warnings.warn(str(exc), stacklevel=2)
@@ -464,7 +464,7 @@ class DAQHandler:
 
                 elif self._task_digital_out_is_obj:
                     try:
-                        self._task_digital_out_obj.start()
+                        self._task_digital_out_obj.configure()
                         self._task_digital_out = self._task_digital_out_obj
                     except Exception as exc:
                         warnings.warn(str(exc), stacklevel=2)

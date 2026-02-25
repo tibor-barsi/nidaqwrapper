@@ -24,7 +24,7 @@ class BaseTask:
 
     Subclasses must set the class attributes ``_channel_attr`` and
     ``_channel_type_label`` and implement their own ``__init__``,
-    ``from_task``, ``start``, ``add_channel``, and data I/O methods.
+    ``from_task``, ``configure``, ``add_channel``, and data I/O methods.
 
     Attributes
     ----------
@@ -95,7 +95,7 @@ class BaseTask:
             self.task = None
 
     def _check_start_preconditions(self) -> None:
-        """Validate that the task can be started.
+        """Validate that the task can be configured or started.
 
         Raises
         ------
@@ -106,15 +106,35 @@ class BaseTask:
         """
         if not self._owns_task:
             raise RuntimeError(
+                "Cannot configure an externally-provided task. "
+                "Configure the nidaqmx.Task directly or pass an "
+                "already-configured task to from_task()."
+            )
+        if not self.task.channel_names:
+            raise ValueError(
+                "Cannot configure: no channels have been added to this task. "
+                "Call add_channel() before configure()."
+            )
+
+    def start(self) -> None:
+        """Start the hardware task.
+
+        Begins acquisition or generation on the underlying nidaqmx task.
+        Call :meth:`configure` first to set timing parameters.
+
+        Raises
+        ------
+        RuntimeError
+            If this task was created via :meth:`from_task`
+            (externally owned — start the nidaqmx.Task directly).
+        """
+        if not self._owns_task:
+            raise RuntimeError(
                 "Cannot start an externally-provided task. "
                 "Start the nidaqmx.Task directly or pass an "
                 "already-started task to from_task()."
             )
-        if not self.task.channel_names:
-            raise ValueError(
-                "Cannot start: no channels have been added to this task. "
-                "Call add_channel() before start()."
-            )
+        self.task.start()
 
     # -- Context manager -----------------------------------------------------
 

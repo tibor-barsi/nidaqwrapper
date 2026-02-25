@@ -4,7 +4,7 @@ Architecture: Direct Delegation
 -------------------------------
 Constructor creates nidaqmx.Task immediately.
 add_channel() delegates to nidaqmx task.ai_channels.add_ai_*() directly.
-start() configures timing and optionally starts the task.
+configure() configures timing. start() starts the task (inherited from BaseTask).
 Getters read from nidaqmx task properties.
 
 All tests use mocked nidaqmx — no hardware required.
@@ -90,7 +90,7 @@ def _make_mock_ni_task(samp_clk_rate=25600):
         side_effect=lambda: iter(_channel_objects)
     )
 
-    # Timing (for start() tests)
+    # Timing (for configure() tests)
     task._timing.samp_clk_rate = samp_clk_rate
     task.timing.samp_clk_rate = samp_clk_rate
 
@@ -103,7 +103,7 @@ def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
 
     Returns (ai_task_instance, mock_nidaqmx_task, patch_context_manager).
     Use inside a ``with`` block — patches stay active so that add_channel()
-    and start() can also run under mocking.
+    and configure() can also run under mocking.
 
     Example::
 
@@ -641,21 +641,21 @@ class TestChannelValidation:
 
 
 # ===========================================================================
-# Task Group 2: start() — replaces initiate()
+# Task Group 2: configure() — configures timing (formerly start())
 # ===========================================================================
 
-class TestStart:
-    """start() configures timing and optionally starts the task."""
+class TestConfigure:
+    """configure() sets up timing on the nidaqmx task without starting it."""
 
     def test_configures_timing(self, mock_system, mock_constants):
-        """start() calls cfg_samp_clk_timing with correct rate and CONTINUOUS mode."""
+        """configure() calls cfg_samp_clk_timing with correct rate and CONTINUOUS mode."""
         ctx, task, mt = _build(mock_system, mock_constants, sample_rate=25600)
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
-            task.start()
+            task.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
@@ -663,7 +663,7 @@ class TestStart:
         assert kwargs["sample_mode"] == mock_constants.AcquisitionType.CONTINUOUS
 
     def test_validates_sample_rate_pass(self, mock_system, mock_constants):
-        """start() succeeds when actual rate matches requested rate."""
+        """configure() succeeds when actual rate matches requested rate."""
         ctx, task, mt = _build(mock_system, mock_constants,
                                sample_rate=25600, samp_clk_rate=25600)
         with ctx:
@@ -671,10 +671,10 @@ class TestStart:
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
-            task.start()  # Should not raise
+            task.configure()  # Should not raise
 
     def test_validates_sample_rate_fail(self, mock_system, mock_constants):
-        """start() raises ValueError when driver coerces the rate."""
+        """configure() raises ValueError when driver coerces the rate."""
         ctx, task, mt = _build(mock_system, mock_constants,
                                sample_rate=25600, samp_clk_rate=25000)
         with ctx:
@@ -683,57 +683,32 @@ class TestStart:
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError, match="[Ss]ample.?[Rr]ate|rate"):
-                task.start()
+                task.configure()
 
-    def test_starts_task_when_true(self, mock_system, mock_constants):
-        """start(start_task=True) calls task.start()."""
+    def test_does_not_start_task(self, mock_system, mock_constants):
+        """configure() does NOT call task.start() on the underlying nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
-            task.start(start_task=True)
-
-        mt.start.assert_called_once()
-
-    def test_does_not_start_by_default(self, mock_system, mock_constants):
-        """start() with no args does NOT call task.start() (default is False)."""
-        ctx, task, mt = _build(mock_system, mock_constants)
-        with ctx:
-            task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
-                sensitivity=100.0, sensitivity_units="mV/g", units="g",
-            )
-            task.start()
+            task.configure()
 
         mt.start.assert_not_called()
 
-    def test_start_task_false(self, mock_system, mock_constants):
-        """start(start_task=False) configures timing but does NOT start."""
+    def test_configure_no_channels_raises(self, mock_system, mock_constants):
+        """configure() raises ValueError when no channels have been added."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
-                sensitivity=100.0, sensitivity_units="mV/g", units="g",
-            )
-            task.start(start_task=False)
-
-        mt.timing.cfg_samp_clk_timing.assert_called_once()
-        mt.start.assert_not_called()
-
-    def test_start_no_channels_raises(self, mock_system, mock_constants):
-        """start() raises ValueError when no channels have been added."""
-        ctx, task, mt = _build(mock_system, mock_constants)
-        with ctx:
-            with pytest.raises(ValueError, match="[Nn]o channels"):
-                task.start()
+            with pytest.raises(ValueError, match="Cannot configure: no channels"):
+                task.configure()
 
     def test_rate_validation_failure_does_not_close_task(self, mock_system, mock_constants):
         """On rate mismatch, task handle remains valid (clear_task() not called).
 
         Unlike old initiate() which created then destroyed the task on failure,
-        start() merely configures timing on an existing task. The task handle
+        configure() merely configures timing on an existing task. The task handle
         survives a rate validation failure.
         """
         ctx, task, mt = _build(mock_system, mock_constants,
@@ -744,10 +719,63 @@ class TestStart:
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError):
-                task.start()
+                task.configure()
 
         # task.close() should NOT have been called — the task still exists
         mt.close.assert_not_called()
+
+
+# ===========================================================================
+# Task Group 2: start() — BaseTask.start() delegates to nidaqmx task.start()
+# ===========================================================================
+
+class TestBaseTaskStart:
+    """start() is inherited from BaseTask and delegates to self.task.start()."""
+
+    def test_start_calls_task_start(self, mock_system, mock_constants):
+        """start() delegates to self.task.start() on the nidaqmx task."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            task.add_channel(
+                "accel_x", device_ind=0, channel_ind=0,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+            task.configure()
+            task.start()
+
+        mt.start.assert_called_once()
+
+    def test_start_blocked_on_external_task(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False.
+
+        An externally-provided task (from_task()) is not owned by the wrapper,
+        so start() must refuse to start it to avoid conflicting with the
+        external caller's lifecycle management.
+        """
+        system = mock_system(task_names=[])
+
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = "CONTINUOUS"
+
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(mock_ni_task)
+
+            with pytest.raises(RuntimeError, match="Cannot start"):
+                task.start()
 
 
 # ===========================================================================
@@ -1982,8 +2010,8 @@ class TestFromTask:
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 
-    def test_start_blocked_raises(self, mock_system, mock_constants):
-        """start() raises RuntimeError on externally-provided task."""
+    def test_configure_blocked_raises(self, mock_system, mock_constants):
+        """configure() raises RuntimeError on externally-provided task."""
         system = mock_system(task_names=[])
 
         mock_ni_task = MagicMock()
@@ -2006,8 +2034,8 @@ class TestFromTask:
             from nidaqwrapper.ai_task import AITask
             task = AITask.from_task(mock_ni_task)
 
-            with pytest.raises(RuntimeError, match="Cannot start"):
-                task.start()
+            with pytest.raises(RuntimeError, match="Cannot configure"):
+                task.configure()
 
     def test_clear_task_does_not_close_warns(self, mock_system, mock_constants):
         """clear_task() does NOT close external task but warns."""

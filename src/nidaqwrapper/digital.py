@@ -81,8 +81,8 @@ class DITask(BaseTask):
 
     The nidaqmx hardware task is created immediately at construction.
     Channels are added via :meth:`add_channel` which delegates directly to the
-    nidaqmx task. Call :meth:`start` to configure timing and optionally start
-    acquisition.
+    nidaqmx task. Call :meth:`configure` to set up timing, then :meth:`start`
+    to begin acquisition.
 
     Parameters
     ----------
@@ -104,7 +104,7 @@ class DITask(BaseTask):
 
     >>> di = DITask(task_name='switches')
     >>> di.add_channel('sw1', lines='Dev1/port0/line0:3')
-    >>> di.start()
+    >>> di.configure()
     >>> data = di.read()
     >>> di.clear_task()
 
@@ -112,7 +112,8 @@ class DITask(BaseTask):
 
     >>> di = DITask(task_name='fast_di', sample_rate=1000)
     >>> di.add_channel('signals', lines='Dev1/port0/line0:7')
-    >>> di.start(start_task=True)
+    >>> di.configure()
+    >>> di.start()
     >>> data = di.acquire()
     >>> di.clear_task()
     """
@@ -207,15 +208,12 @@ class DITask(BaseTask):
 
     # -- Task lifecycle -------------------------------------------------------
 
-    def start(self, start_task: bool = False) -> None:
-        """Configure timing and optionally start acquisition.
+    def configure(self) -> None:
+        """Configure timing for digital input.
 
-        Parameters
-        ----------
-        start_task : bool, optional
-            If ``True`` and mode is ``'clocked'``, the task is started after
-            timing configuration. On-demand mode never starts the task
-            regardless of this flag. Default is ``False``.
+        In clocked mode, configures sample-clock timing for continuous
+        acquisition.  In on-demand mode, this is a no-op (no timing to
+        configure).  Call :meth:`start` afterwards to begin acquisition.
 
         Raises
         ------
@@ -231,8 +229,6 @@ class DITask(BaseTask):
                 rate=self.sample_rate,
                 sample_mode=constants.AcquisitionType.CONTINUOUS,
             )
-            if start_task:
-                self.task.start()
 
     # -- Data acquisition ----------------------------------------------------
 
@@ -417,7 +413,7 @@ class DITask(BaseTask):
         -----
         When created via this method:
 
-        - :meth:`add_channel` and :meth:`start` will raise RuntimeError
+        - :meth:`add_channel`, :meth:`configure`, and :meth:`start` will raise RuntimeError
         - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
         - The caller retains full ownership and must manage the task lifecycle
 
@@ -482,8 +478,8 @@ class DOTask(BaseTask):
 
     The nidaqmx hardware task is created immediately at construction.
     Channels are added via :meth:`add_channel` which delegates directly to the
-    nidaqmx task. Call :meth:`start` to configure timing and optionally begin
-    output.
+    nidaqmx task. Call :meth:`configure` to set up timing, then :meth:`start`
+    to begin output.
 
     Parameters
     ----------
@@ -505,7 +501,7 @@ class DOTask(BaseTask):
 
     >>> do = DOTask(task_name='leds')
     >>> do.add_channel('led_1', lines='Dev1/port1/line0')
-    >>> do.start()
+    >>> do.configure()
     >>> do.write(True)
     >>> do.clear_task()
 
@@ -513,7 +509,8 @@ class DOTask(BaseTask):
 
     >>> do = DOTask(task_name='pattern_gen', sample_rate=1000)
     >>> do.add_channel('lines', lines='Dev1/port1/line0:3')
-    >>> do.start(start_task=True)
+    >>> do.configure()
+    >>> do.start()
     >>> do.write_continuous(data)
     >>> do.clear_task()
     """
@@ -604,15 +601,12 @@ class DOTask(BaseTask):
 
     # -- Task lifecycle -------------------------------------------------------
 
-    def start(self, start_task: bool = False) -> None:
-        """Configure timing and optionally start output generation.
+    def configure(self) -> None:
+        """Configure timing for digital output.
 
-        Parameters
-        ----------
-        start_task : bool, optional
-            If ``True`` and mode is ``'clocked'``, the task is started after
-            timing configuration. On-demand mode never starts the task
-            regardless of this flag. Default is ``False``.
+        In clocked mode, configures sample-clock timing for continuous
+        generation.  In on-demand mode, this is a no-op (no timing to
+        configure).  Call :meth:`start` afterwards to begin generation.
 
         Raises
         ------
@@ -628,8 +622,6 @@ class DOTask(BaseTask):
                 rate=self.sample_rate,
                 sample_mode=constants.AcquisitionType.CONTINUOUS,
             )
-            if start_task:
-                self.task.start()
 
     # -- Signal output -------------------------------------------------------
 
@@ -805,7 +797,7 @@ class DOTask(BaseTask):
         -----
         When created via this method:
 
-        - :meth:`add_channel` and :meth:`start` will raise RuntimeError
+        - :meth:`add_channel`, :meth:`configure`, and :meth:`start` will raise RuntimeError
         - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
         - The caller retains full ownership and must manage the task lifecycle
 

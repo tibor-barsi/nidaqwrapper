@@ -591,8 +591,8 @@ class MultiHandler:
         Accepts four types and resolves each:
 
         - ``str``           → :func:`get_task_by_name`
-        - :class:`AITask`   → ``ni_task.start(start_task=False)``
-        - :class:`AOTask` → ``ni_task_out.start(start_task=False)``
+        - :class:`AITask`   → ``ni_task.configure()``
+        - :class:`AOTask` → ``ni_task_out.configure()``
         - ``nidaqmx.task.Task`` → passed through unchanged
 
         Parameters
@@ -616,11 +616,11 @@ class MultiHandler:
                 resolved.append(get_task_by_name(task))
 
             elif isinstance(task, AITask):
-                task.start(start_task=False)
+                task.configure()
                 resolved.append(task.task)
 
             elif isinstance(task, AOTask):
-                task.start(start_task=False)
+                task.configure()
                 resolved.append(task.task)
 
             elif _NIDAQMX_AVAILABLE and isinstance(task, nidaqmx.task.Task):

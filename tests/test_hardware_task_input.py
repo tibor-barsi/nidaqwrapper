@@ -171,14 +171,14 @@ class TestHardwareAddChannel:
 
 
 class TestHardwareStart:
-    """Verify AITask.start() creates and starts a real nidaqmx task."""
+    """Verify AITask.configure() and start() creates and starts a real nidaqmx task."""
 
-    def test_start_creates_task(self) -> None:
-        """start(start_task=False) creates a nidaqmx Task without starting it.
+    def test_configure_creates_task(self) -> None:
+        """configure() sets up timing on a nidaqmx Task without starting it.
 
-        After start() returns, task.task must be a live nidaqmx Task object
-        (not None).  With start_task=False the task should not yet be running,
-        so calling task.task.is_task_done() should return True (nothing started).
+        After configure() returns, task.task must be a live nidaqmx Task object
+        (not None).  The task should not yet be running, so calling
+        task.task.is_task_done() should return True (nothing started).
         """
         from nidaqwrapper.ai_task import AITask
 
@@ -190,17 +190,17 @@ class TestHardwareStart:
                 channel_ind=0,
                 units="V",
             )
-            task.start(start_task=False)
+            task.configure()
 
-            assert task.task is not None, "task.task must not be None after start()"
+            assert task.task is not None, "task.task must not be None after configure()"
         finally:
             task.clear_task()
 
     def test_start_starts_task(self) -> None:
-        """start(start_task=True) leaves the task in a running state.
+        """configure() + start() leaves the task in a running state.
 
         A running continuous-acquisition task is not done, so
-        task.task.is_task_done() must return False immediately after start.
+        task.task.is_task_done() must return False immediately after start().
         """
         from nidaqwrapper.ai_task import AITask
 
@@ -212,7 +212,8 @@ class TestHardwareStart:
                 channel_ind=0,
                 units="V",
             )
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             assert task.task.is_task_done() is False, (
                 "A started continuous task must not report is_task_done()=True"
@@ -220,10 +221,10 @@ class TestHardwareStart:
         finally:
             task.clear_task()
 
-    def test_start_sample_rate_validated(self) -> None:
-        """start() does not raise for 25600 Hz, an exact match on NI 9215.
+    def test_configure_sample_rate_validated(self) -> None:
+        """configure() does not raise for 25600 Hz, an exact match on NI 9215.
 
-        The NI 9215 supports 25600 Hz natively.  start() reads the rate
+        The NI 9215 supports 25600 Hz natively.  configure() reads the rate
         the driver actually committed (task._timing.samp_clk_rate) and raises
         ValueError if it differs from the requested rate.  This test verifies
         no exception is raised for a known-good rate.
@@ -239,7 +240,7 @@ class TestHardwareStart:
                 units="V",
             )
             # Should complete without raising ValueError
-            task.start(start_task=False)
+            task.configure()
         finally:
             task.clear_task()
 
@@ -274,7 +275,8 @@ class TestHardwareAcquire:
                 channel_ind=0,
                 units="V",
             )
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
@@ -322,7 +324,8 @@ class TestHardwareAcquire:
                 channel_ind=1,
                 units="V",
             )
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
@@ -360,7 +363,8 @@ class TestHardwareAcquire:
                 channel_ind=0,
                 units="V",
             )
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Priming read — first read(-1) may return 0 samples
             time.sleep(0.1)
@@ -407,11 +411,11 @@ class TestHardwareClearTask:
             channel_ind=0,
             units="V",
         )
-        first.start(start_task=False)
+        first.configure()
         first.clear_task()
 
         # If the hardware handle was not released, this second construction
-        # or its start() call would fail with a nidaqmx error.
+        # or its configure() call would fail with a nidaqmx error.
         second = AITask(task_name, sample_rate=SAMPLE_RATE)
         try:
             second.add_channel(
@@ -420,7 +424,7 @@ class TestHardwareClearTask:
                 channel_ind=0,
                 units="V",
             )
-            second.start(start_task=False)
+            second.configure()
         finally:
             second.clear_task()
 
@@ -495,7 +499,7 @@ class TestHardwareContextManager:
                 channel_ind=0,
                 units="V",
             )
-            task.start(start_task=False)
+            task.configure()
 
         # After __exit__, the task handle must be released
         assert task.task is None, (
@@ -511,5 +515,5 @@ class TestHardwareContextManager:
                 channel_ind=0,
                 units="V",
             )
-            second.start(start_task=False)
+            second.configure()
         # second.__exit__ cleans up automatically here

@@ -46,6 +46,7 @@ class TestDITaskSimulated:
                 "di_ch",
                 lines=f"{simulated_device_name}/port0/line0:3"
             )
+            di.configure()
             di.start()
 
             data = di.read()
@@ -73,7 +74,8 @@ class TestDITaskSimulated:
                 "di_ch",
                 lines=f"{simulated_device_name}/port0/line0:3"
             )
-            di.start(start_task=True)
+            di.configure()
+            di.start()
 
             # Let buffer fill
             time.sleep(0.15)
@@ -97,7 +99,8 @@ class TestDITaskSimulated:
                 "di_ch",
                 lines=f"{simulated_device_name}/port0/line0:3"
             )
-            di.start(start_task=True)
+            di.configure()
+            di.start()
 
             # Blocking read for exactly 100 samples
             data = di.acquire(n_samples=100)
@@ -126,6 +129,7 @@ class TestDOTaskSimulated:
                 "do_ch",
                 lines=f"{simulated_device_name}/port1/line0:3"
             )
+            do.configure()
             do.start()
 
             # Write 4 boolean values (one per line)
@@ -150,7 +154,7 @@ class TestDOTaskSimulated:
                 "do_ch",
                 lines=f"{simulated_device_name}/port0/line4:7"
             )
-            do.start(start_task=False)
+            do.configure()
 
             # Generate 200 samples of bool data (200, 4)
             data = np.random.randint(0, 2, size=(200, 4), dtype=bool)
@@ -174,6 +178,7 @@ class TestDOTaskSimulated:
                 "do_ch",
                 lines=f"{simulated_device_name}/port1/line4"
             )
+            do.configure()
             do.start()
 
             # Write single bool value

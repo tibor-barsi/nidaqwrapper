@@ -49,8 +49,8 @@ class TestAITaskSimulated:
         finally:
             task.clear_task()
 
-    def test_start_and_acquire_finite(self, sim_device_index):
-        """Start task, acquire exactly n_samples, verify shape and data."""
+    def test_configure_and_acquire_finite(self, sim_device_index):
+        """Configure and start task, acquire exactly n_samples, verify shape and data."""
         from nidaqwrapper import AITask
 
         task = AITask("test_ai_finite", sample_rate=10000)
@@ -63,8 +63,9 @@ class TestAITaskSimulated:
                 "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
             )
 
-            # Start task with start_task=True
-            task.start(start_task=True)
+            # Configure timing then start acquisition
+            task.configure()
+            task.start()
 
             # Acquire exactly 100 samples (blocking call)
             data = task.acquire(n_samples=100)
@@ -90,7 +91,8 @@ class TestAITaskSimulated:
                 "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
             )
 
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Sleep to let buffer fill
             time.sleep(0.1)
@@ -160,7 +162,8 @@ class TestAITaskSimulated:
             task.add_channel(
                 "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
             )
-            task.start(start_task=True)
+            task.configure()
+            task.start()
             time.sleep(0.1)
             data = task.acquire(n_samples=100)
             assert data.shape == (1, 100)
@@ -173,7 +176,7 @@ class TestAITaskSimulated:
             task2.add_channel(
                 "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
             )
-            task2.start(start_task=False)
+            task2.configure()
 
     def test_save_config_and_from_config_round_trip(
         self, sim_device_index, tmp_path
@@ -193,8 +196,8 @@ class TestAITaskSimulated:
                 "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
             )
 
-            # Start task (required before save_config)
-            task1.start(start_task=False)
+            # Configure task (required before save_config)
+            task1.configure()
 
             # Save config
             task1.save_config(config_path)
@@ -213,7 +216,8 @@ class TestAITaskSimulated:
             assert len(task2.channel_list) == 2
 
             # Verify task works
-            task2.start(start_task=True)
+            task2.configure()
+            task2.start()
             time.sleep(0.1)
             data = task2.acquire(n_samples=100)
             assert data.shape == (2, 100)

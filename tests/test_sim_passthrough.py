@@ -170,8 +170,8 @@ class TestExternalTaskRestrictions:
             wrapper.clear_task()
             raw_task.close()
 
-    def test_start_blocked_on_external_task(self, simulated_device_name):
-        """Test that start() raises RuntimeError for externally-owned tasks."""
+    def test_configure_blocked_on_external_task(self, simulated_device_name):
+        """Test that configure() raises RuntimeError for externally-owned tasks."""
         raw_task = nidaqmx.Task("test_start_blocked")
         try:
             raw_task.ai_channels.add_ai_voltage_chan(
@@ -181,9 +181,9 @@ class TestExternalTaskRestrictions:
 
             wrapper = AITask.from_task(raw_task)
 
-            # Attempt to start via wrapper — should raise RuntimeError
+            # Attempt to configure via wrapper — should raise RuntimeError
             with pytest.raises(RuntimeError, match="Cannot start"):
-                wrapper.start()
+                wrapper.configure()
         finally:
             wrapper.clear_task()
             raw_task.close()

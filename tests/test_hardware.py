@@ -162,7 +162,8 @@ class TestAITaskHardware:
         task = AITask("hw_acq_voltage", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Priming read — discard
             time.sleep(0.1)
@@ -189,7 +190,8 @@ class TestAITaskHardware:
         task = AITask("hw_rate_check", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             # Priming read
             time.sleep(0.1)
@@ -216,7 +218,8 @@ class TestAITaskHardware:
         task_name = "hw_ctx_nitask"
         with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.start(start_task=True)
+            task.configure()
+            task.start()
 
             time.sleep(0.1)
             task.acquire()
@@ -230,7 +233,7 @@ class TestAITaskHardware:
         # Can re-create with same name (proves cleanup)
         with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task2:
             task2.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task2.start(start_task=False)
+            task2.configure()
 
 
 # ===========================================================================
@@ -254,7 +257,7 @@ class TestAOTaskHardware:
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
-            task.start()
+            task.configure()
 
             # Generate a short sine wave (1 second, within NI 9260 range)
             t = np.linspace(0, 1, AO_SAMPLE_RATE, endpoint=False)
@@ -279,7 +282,7 @@ class TestAOTaskHardware:
                 "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
-            task.start()
+            task.configure()
 
             t = np.linspace(0, 1, AO_SAMPLE_RATE, endpoint=False)
             signal = (1.0 * np.sin(2 * np.pi * 10 * t)).reshape(-1, 1)
@@ -489,7 +492,7 @@ class TestWrapperContextManager:
         new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            new_task.start(start_task=False)
+            new_task.configure()
         finally:
             new_task.clear_task()
 
@@ -511,7 +514,7 @@ class TestWrapperContextManager:
         new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
             new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            new_task.start(start_task=False)
+            new_task.configure()
         finally:
             new_task.clear_task()
 
@@ -538,6 +541,7 @@ class TestDigitalIO:
         di = DITask("hw_di_read")
         try:
             di.add_channel("di_ch", lines=DI_LINES)
+            di.configure()
             di.start()
             data = di.read()
 
@@ -559,6 +563,7 @@ class TestDigitalIO:
         do = DOTask("hw_do_write")
         try:
             do.add_channel("do_ch", lines=DO_LINES)
+            do.configure()
             do.start()
 
             do.write(True)
@@ -576,6 +581,7 @@ class TestDigitalIO:
         task_name = "hw_di_ctx"
         with DITask(task_name) as di:
             di.add_channel("di_ch", lines=DI_LINES)
+            di.configure()
             di.start()
             data = di.read()
             assert data.size >= 1
@@ -640,7 +646,7 @@ class TestMultiHandlerHardware:
         task = AITask("hw_adv_st", sample_rate=AI_SAMPLE_RATE)
         try:
             task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
-            task.start(start_task=False)
+            task.configure()
 
             adv = MultiHandler()
             try:

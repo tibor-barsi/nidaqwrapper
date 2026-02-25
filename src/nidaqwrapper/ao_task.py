@@ -59,8 +59,8 @@ class AOTask(BaseTask):
 
     The nidaqmx hardware task is created immediately at construction.
     Channels are added via :meth:`add_channel` which delegates directly
-    to the nidaqmx task.  Call :meth:`start` to configure timing and
-    optionally start output generation.
+    to the nidaqmx task.  Call :meth:`configure` to set up timing,
+    then :meth:`start` to begin output generation.
 
     Parameters
     ----------
@@ -208,19 +208,13 @@ class AOTask(BaseTask):
 
     # -- Task lifecycle -------------------------------------------------------
 
-    def start(self, start_task: bool = False) -> None:
-        """Configure timing and optionally start output generation.
+    def configure(self) -> None:
+        """Configure sample-clock timing for continuous output generation.
 
-        Configures the sample-clock timing on the nidaqmx task, enables
-        buffer regeneration, validates that the driver accepted the
-        requested sample rate, and optionally starts the task.
-
-        Parameters
-        ----------
-        start_task : bool, optional
-            If ``True``, call ``task.start()`` after configuration.
-            Default is ``False`` — the caller is responsible for starting
-            (e.g. via hardware trigger or explicit ``task.start()``).
+        Sets up the sample-clock timing on the nidaqmx task, enables
+        buffer regeneration, and validates that the driver accepted the
+        requested sample rate.  Call :meth:`start` afterwards to begin
+        generation.
 
         Raises
         ------
@@ -231,12 +225,6 @@ class AOTask(BaseTask):
         RuntimeError
             If this task wraps an externally-provided nidaqmx.Task
             (created via :meth:`from_task`).
-
-        Notes
-        -----
-        Unlike the old ``initiate()``, a rate mismatch does NOT close the
-        task handle.  The task remains valid and can be reconfigured or
-        closed by the caller.
         """
         self._check_start_preconditions()
 
@@ -256,9 +244,6 @@ class AOTask(BaseTask):
                 f"device. The driver coerced it to {actual_rate} Hz. "
                 "Use a rate that the device supports."
             )
-
-        if start_task:
-            self.task.start()
 
     # -- Signal generation ---------------------------------------------------
 
@@ -490,7 +475,7 @@ class AOTask(BaseTask):
         When wrapping an external task:
 
         - :meth:`add_channel` is blocked and raises ``RuntimeError``
-        - :meth:`start` is blocked and raises ``RuntimeError``
+        - :meth:`configure` and :meth:`start` are blocked and raise ``RuntimeError``
         - :meth:`clear_task` and ``__exit__`` do NOT close the task
         - The caller remains responsible for calling ``task.close()``
 

@@ -42,8 +42,8 @@ class TestAOTaskSimulated:
                 min_val=-10.0, max_val=10.0
             )
 
-            # Start task
-            task.start(start_task=False)
+            # Configure task
+            task.configure()
 
             # Generate single-channel data (1-D array)
             signal = np.sin(np.linspace(0, 2 * np.pi, 100))
@@ -72,8 +72,8 @@ class TestAOTaskSimulated:
                 min_val=-10.0, max_val=10.0
             )
 
-            # Start task
-            task.start(start_task=False)
+            # Configure task
+            task.configure()
 
             # Generate multi-channel data (2-D array, public format)
             t = np.linspace(0, 2 * np.pi, 100)
@@ -143,7 +143,7 @@ class TestAOTaskSimulated:
                 "ao0", device_ind=sim_device_index, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
-            task.start(start_task=False)
+            task.configure()
 
             signal = np.sin(np.linspace(0, 2 * np.pi, 100))
             task.generate(signal)
@@ -157,7 +157,7 @@ class TestAOTaskSimulated:
                 "ao0", device_ind=sim_device_index, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
-            task2.start(start_task=False)
+            task2.configure()
 
     def test_save_config_and_from_config_round_trip(
         self, sim_device_index, tmp_path
@@ -179,8 +179,8 @@ class TestAOTaskSimulated:
                 min_val=-5.0, max_val=5.0
             )
 
-            # Start task (required before save_config)
-            task1.start(start_task=False)
+            # Configure task (required before save_config)
+            task1.configure()
 
             # Save config
             task1.save_config(config_path)
@@ -199,7 +199,7 @@ class TestAOTaskSimulated:
             assert len(task2.channel_list) == 2
 
             # Verify task works
-            task2.start(start_task=False)
+            task2.configure()
             t = np.linspace(0, 2 * np.pi, 100)
             signal = np.column_stack([np.sin(t), np.cos(t)])
             task2.generate(signal)

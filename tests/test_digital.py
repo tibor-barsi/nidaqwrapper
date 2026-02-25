@@ -4,7 +4,8 @@ Architecture: Direct Delegation
 --------------------------------
 Constructor creates nidaqmx.Task immediately (not deferred to initiate()).
 add_channel() delegates directly to nidaqmx task.di_channels / do_channels.
-start() replaces initiate() — configures timing and optionally starts task.
+configure() sets up timing in clocked mode (no-op in on_demand mode).
+start() (inherited from BaseTask) starts the underlying nidaqmx task.
 self.channels dict is REMOVED — nidaqmx task is single source of truth.
 initiate() is REMOVED.
 save_config() / from_config() added for TOML persistence.
@@ -104,7 +105,7 @@ def _build_di(
         ctx, di, mt = _build_di(mock_system, mock_constants)
         with ctx:
             di.add_channel("btn", lines="Dev1/port0/line0")
-            di.start()
+            di.configure()
     """
     if task_names is None:
         task_names = []
@@ -157,7 +158,7 @@ def _build_do(
         ctx, do, mt = _build_do(mock_system, mock_constants)
         with ctx:
             do.add_channel("led", lines="Dev1/port1/line0")
-            do.start()
+            do.configure()
     """
     if task_names is None:
         task_names = []
@@ -418,72 +419,114 @@ class TestDITaskAddChannel:
         assert len(di._channel_configs) == 2
 
 
-class TestDITaskStart:
-    """start() replaces initiate() — configures timing and optionally starts task."""
+class TestDITaskConfigure:
+    """configure() sets up clocked timing (no-op in on_demand mode)."""
 
     def test_clocked_configures_timing(self, mock_system, mock_constants):
-        """start() calls cfg_samp_clk_timing in clocked mode."""
+        """configure() calls cfg_samp_clk_timing in clocked mode."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start()
+            di.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
         assert kwargs["rate"] == 1000
 
     def test_clocked_uses_continuous_mode(self, mock_system, mock_constants):
-        """start() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
+        """configure() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start()
+            di.configure()
 
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
         assert kwargs["sample_mode"] == mock_constants.AcquisitionType.CONTINUOUS
 
     def test_on_demand_no_timing(self, mock_system, mock_constants):
-        """start() in on-demand mode does NOT configure timing."""
+        """configure() in on-demand mode does NOT configure timing."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=None)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start()
+            di.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_not_called()
 
-    def test_on_demand_does_not_start(self, mock_system, mock_constants):
-        """start() in on-demand mode does NOT call task.start()."""
+    def test_on_demand_configure_no_timing(self, mock_system, mock_constants):
+        """configure() in on-demand mode is a no-op — no timing, no task start."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=None)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start(start_task=True)
+            di.configure()
 
+        mt.timing.cfg_samp_clk_timing.assert_not_called()
         mt.start.assert_not_called()
 
-    def test_clocked_start_task_true(self, mock_system, mock_constants):
-        """start(start_task=True) calls task.start() in clocked mode."""
+    def test_clocked_configure_then_start(self, mock_system, mock_constants):
+        """configure() then start() calls task.start() in clocked mode."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start(start_task=True)
+            di.configure()
+            di.start()
 
         mt.start.assert_called_once()
 
-    def test_clocked_start_task_false(self, mock_system, mock_constants):
-        """start(start_task=False) configures timing but does NOT start the task."""
+    def test_clocked_configure_only(self, mock_system, mock_constants):
+        """configure() alone configures timing but does NOT start the task."""
         ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start(start_task=False)
+            di.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
         mt.start.assert_not_called()
 
-    def test_start_no_channels_raises(self, mock_system, mock_constants):
-        """start() raises ValueError when no channels have been added."""
+    def test_configure_no_channels_raises(self, mock_system, mock_constants):
+        """configure() raises ValueError when no channels have been added."""
         ctx, di, _ = _build_di(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             with pytest.raises(ValueError, match="[Nn]o channels|channel"):
+                di.configure()
+
+
+class TestDITaskStart:
+    """start() (inherited from BaseTask) starts the underlying nidaqmx task."""
+
+    def test_start_calls_task_start(self, mock_system, mock_constants):
+        """start() delegates to self.task.start()."""
+        ctx, di, mt = _build_di(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            di.add_channel("ch", lines="Dev1/port0/line0")
+            di.configure()
+            di.start()
+
+        mt.start.assert_called_once()
+
+    def test_start_blocked_on_external_task(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_di"
+        mock_ni_task.di_channels.add_di_chan(
+            lines="Dev1/port0/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+
+            di = DITask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError,
+                match="Cannot start an externally-provided task",
+            ):
                 di.start()
 
 
@@ -569,7 +612,7 @@ class TestDITaskReadAllAvailable:
         ]
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0:3")
-            di.start(start_task=False)
+            di.configure()
             data = di.acquire()
 
         assert data.shape == (500, 4)
@@ -611,7 +654,7 @@ class TestDITaskReadAllAvailable:
         mt.read.return_value = [True, False, True]
         with ctx:
             di.add_channel("ch", lines="Dev1/port0/line0")
-            di.start(start_task=False)
+            di.configure()
             data = di.acquire()
 
         assert data.shape == (3, 1)
@@ -1264,8 +1307,8 @@ class TestDITaskFromTask:
             ):
                 di.add_channel("new_ch", lines="Dev1/port0/line1")
 
-    def test_start_blocked(self, mock_system, mock_constants):
-        """start() raises RuntimeError when _owns_task is False."""
+    def test_configure_blocked(self, mock_system, mock_constants):
+        """configure() raises RuntimeError when _owns_task is False."""
         system = mock_system(task_names=[])
         mock_ni_task = _make_mock_ni_task()
         mock_ni_task.name = "external_di"
@@ -1286,9 +1329,9 @@ class TestDITaskFromTask:
 
             with pytest.raises(
                 RuntimeError,
-                match="Cannot start an externally-provided task",
+                match="Cannot configure an externally-provided task",
             ):
-                di.start()
+                di.configure()
 
     def test_clear_task_does_not_close(self, mock_system, mock_constants):
         """clear_task() does NOT close external task, warns instead."""
@@ -1599,72 +1642,114 @@ class TestDOTaskAddChannel:
         assert len(do._channel_configs) == 2
 
 
-class TestDOTaskStart:
-    """start() replaces initiate() — configures timing and optionally starts task."""
+class TestDOTaskConfigure:
+    """configure() sets up clocked timing (no-op in on_demand mode)."""
 
     def test_clocked_configures_timing(self, mock_system, mock_constants):
-        """start() calls cfg_samp_clk_timing in clocked mode."""
+        """configure() calls cfg_samp_clk_timing in clocked mode."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start()
+            do.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
         assert kwargs["rate"] == 1000
 
     def test_clocked_uses_continuous_mode(self, mock_system, mock_constants):
-        """start() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
+        """configure() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start()
+            do.configure()
 
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
         assert kwargs["sample_mode"] == mock_constants.AcquisitionType.CONTINUOUS
 
     def test_on_demand_no_timing(self, mock_system, mock_constants):
-        """start() in on-demand mode does NOT configure timing."""
+        """configure() in on-demand mode does NOT configure timing."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=None)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start()
+            do.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_not_called()
 
-    def test_on_demand_does_not_start(self, mock_system, mock_constants):
-        """start() in on-demand mode does NOT call task.start()."""
+    def test_on_demand_configure_no_timing(self, mock_system, mock_constants):
+        """configure() in on-demand mode is a no-op — no timing, no task start."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=None)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start(start_task=True)
+            do.configure()
 
+        mt.timing.cfg_samp_clk_timing.assert_not_called()
         mt.start.assert_not_called()
 
-    def test_clocked_start_task_true(self, mock_system, mock_constants):
-        """start(start_task=True) calls task.start() in clocked mode."""
+    def test_clocked_configure_then_start(self, mock_system, mock_constants):
+        """configure() then start() calls task.start() in clocked mode."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start(start_task=True)
+            do.configure()
+            do.start()
 
         mt.start.assert_called_once()
 
-    def test_clocked_start_task_false(self, mock_system, mock_constants):
-        """start(start_task=False) configures timing but does NOT start the task."""
+    def test_clocked_configure_only(self, mock_system, mock_constants):
+        """configure() alone configures timing but does NOT start the task."""
         ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             do.add_channel("ch", lines="Dev1/port1/line0")
-            do.start(start_task=False)
+            do.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
         mt.start.assert_not_called()
 
-    def test_start_no_channels_raises(self, mock_system, mock_constants):
-        """start() raises ValueError when no channels have been added."""
+    def test_configure_no_channels_raises(self, mock_system, mock_constants):
+        """configure() raises ValueError when no channels have been added."""
         ctx, do, _ = _build_do(mock_system, mock_constants, sample_rate=1000)
         with ctx:
             with pytest.raises(ValueError, match="[Nn]o channels|channel"):
+                do.configure()
+
+
+class TestDOTaskStart:
+    """start() (inherited from BaseTask) starts the underlying nidaqmx task."""
+
+    def test_start_calls_task_start(self, mock_system, mock_constants):
+        """start() delegates to self.task.start()."""
+        ctx, do, mt = _build_do(mock_system, mock_constants, sample_rate=1000)
+        with ctx:
+            do.add_channel("ch", lines="Dev1/port1/line0")
+            do.configure()
+            do.start()
+
+        mt.start.assert_called_once()
+
+    def test_start_blocked_on_external_task(self, mock_system, mock_constants):
+        """start() raises RuntimeError when _owns_task is False."""
+        system = mock_system(task_names=[])
+        mock_ni_task = _make_mock_ni_task()
+        mock_ni_task.name = "external_do"
+        mock_ni_task.do_channels.add_do_chan(
+            lines="Dev1/port1/line0", name_to_assign_to_lines="ch1"
+        )
+
+        with (
+            patch(
+                "nidaqwrapper.digital.nidaqmx.system.System.local",
+                return_value=system,
+            ),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+
+            do = DOTask.from_task(mock_ni_task)
+
+            with pytest.raises(
+                RuntimeError,
+                match="Cannot start an externally-provided task",
+            ):
                 do.start()
 
 
@@ -2411,8 +2496,8 @@ class TestDOTaskFromTask:
             ):
                 do.add_channel("new_ch", lines="Dev1/port1/line1")
 
-    def test_start_blocked(self, mock_system, mock_constants):
-        """start() raises RuntimeError when _owns_task is False."""
+    def test_configure_blocked(self, mock_system, mock_constants):
+        """configure() raises RuntimeError when _owns_task is False."""
         system = mock_system(task_names=[])
         mock_ni_task = _make_mock_ni_task()
         mock_ni_task.name = "external_do"
@@ -2433,9 +2518,9 @@ class TestDOTaskFromTask:
 
             with pytest.raises(
                 RuntimeError,
-                match="Cannot start an externally-provided task",
+                match="Cannot configure an externally-provided task",
             ):
-                do.start()
+                do.configure()
 
     def test_clear_task_does_not_close(self, mock_system, mock_constants):
         """clear_task() does NOT close external task, warns instead."""

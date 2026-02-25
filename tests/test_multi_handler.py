@@ -252,28 +252,28 @@ class TestConfigureWithNidaqmxTask:
 class TestConfigureWithAITask:
     """Task group 2.3 — configure() with AITask objects."""
 
-    def test_nitask_resolved_via_start(self, adv, advanced_module):
-        """2.3 AITask objects are resolved: start() called, underlying task extracted."""
+    def test_nitask_resolved_via_configure(self, adv, advanced_module):
+        """2.3 AITask objects are resolved: configure() called, underlying task extracted."""
         mock_ni_task = MagicMock(spec=advanced_module.AITask)
         underlying = _make_nidaqmx_task("ResolvedTask")
         mock_ni_task.task = underlying
 
         result = adv._resolve_tasks([mock_ni_task])
-        mock_ni_task.start.assert_called_once_with(start_task=False)
+        mock_ni_task.configure.assert_called_once()
         assert result == [underlying]
 
 
 class TestConfigureWithAOTask:
     """Task group 2.4 — configure() with AOTask objects."""
 
-    def test_nitaskoutput_resolved_via_start(self, adv, advanced_module):
-        """2.4 AOTask objects are resolved: start() called, underlying task extracted."""
+    def test_nitaskoutput_resolved_via_configure(self, adv, advanced_module):
+        """2.4 AOTask objects are resolved: configure() called, underlying task extracted."""
         mock_ni_task_out = MagicMock(spec=advanced_module.AOTask)
         underlying = _make_nidaqmx_task("OutputResolvedTask")
         mock_ni_task_out.task = underlying
 
         result = adv._resolve_tasks([mock_ni_task_out])
-        mock_ni_task_out.start.assert_called_once_with(start_task=False)
+        mock_ni_task_out.configure.assert_called_once()
         assert result == [underlying]
 
 
@@ -375,24 +375,24 @@ class TestResolveTasks:
             result = adv._resolve_tasks(["SomeName"])
             assert result == [loaded]
 
-    def test_resolve_nitask_calls_start(self, adv, advanced_module):
-        """3.2 AITask always calls start(start_task=False) to configure timing."""
+    def test_resolve_nitask_calls_configure(self, adv, advanced_module):
+        """3.2 AITask always calls configure() to set up timing before extraction."""
         ni_task = MagicMock(spec=advanced_module.AITask)
         underlying = _make_nidaqmx_task()
         ni_task.task = underlying  # task exists from direct-delegation __init__
 
         result = adv._resolve_tasks([ni_task])
-        ni_task.start.assert_called_once_with(start_task=False)
+        ni_task.configure.assert_called_once()
         assert result == [underlying]
 
-    def test_resolve_nitaskoutput_calls_start(self, adv, advanced_module):
-        """3.3 AOTask always calls start(start_task=False) to configure timing."""
+    def test_resolve_nitaskoutput_calls_configure(self, adv, advanced_module):
+        """3.3 AOTask always calls configure() to set up timing before extraction."""
         ni_task_out = MagicMock(spec=advanced_module.AOTask)
         underlying = _make_nidaqmx_task()
         ni_task_out.task = underlying  # task exists from direct-delegation __init__
 
         result = adv._resolve_tasks([ni_task_out])
-        ni_task_out.start.assert_called_once_with(start_task=False)
+        ni_task_out.configure.assert_called_once()
         assert result == [underlying]
 
     def test_resolve_nidaqmx_task_passthrough(self, adv, advanced_module):

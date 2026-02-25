@@ -38,9 +38,9 @@ def _make_mock_ai_task(
     task.channel_list = ["ch0", "ch1"]
     task.number_of_ch = 2
     task.device_list = ["cDAQ1Mod1"]
-    task.start = MagicMock()
+    task.configure = MagicMock()
 
-    # Mock the underlying nidaqmx task (set after start())
+    # Mock the underlying nidaqmx task (set after configure())
     inner_task = MagicMock()
     inner_task.channel_names = ["ch0", "ch1"]
     inner_task.number_of_channels = 2
@@ -69,7 +69,7 @@ def _make_mock_ao_task(
     task.channel_list = ["ao0"]
     task.number_of_ch = 1
     task.device_list = ["cDAQ1Mod2"]
-    task.start = MagicMock()
+    task.configure = MagicMock()
 
     inner_task = MagicMock()
     inner_task.channel_names = ["ao0"]
@@ -90,8 +90,8 @@ class _FakeDITask:
     ``isinstance(mock2, type(mock1))`` fail.  Using a concrete class
     ensures all instances share the same type.
 
-    After the direct-delegation refactor, connect() calls start() instead
-    of initiate() on digital task objects.
+    After the direct-delegation refactor, connect() calls configure() instead
+    of start() on digital task objects.
     """
 
     def __init__(self, task_name="di_test", sample_rate=None):
@@ -99,7 +99,7 @@ class _FakeDITask:
         self.sample_rate = sample_rate
         self.mode = "on_demand" if sample_rate is None else "clocked"
         self.task = None
-        self.start = MagicMock()
+        self.configure = MagicMock()
         self.read = MagicMock(return_value=np.array([True, False]))
         self.clear_task = MagicMock()
 
@@ -107,8 +107,8 @@ class _FakeDITask:
 class _FakeDOTask:
     """Fake DOTask for testing isinstance() checks.
 
-    After the direct-delegation refactor, connect() calls start() instead
-    of initiate() on digital task objects.
+    After the direct-delegation refactor, connect() calls configure() instead
+    of start() on digital task objects.
     """
 
     def __init__(self, task_name="do_test", sample_rate=None):
@@ -116,7 +116,7 @@ class _FakeDOTask:
         self.sample_rate = sample_rate
         self.mode = "on_demand" if sample_rate is None else "clocked"
         self.task = None
-        self.start = MagicMock()
+        self.configure = MagicMock()
         self.write = MagicMock()
         self.clear_task = MagicMock()
 
@@ -439,10 +439,10 @@ class TestConnectDisconnect:
         assert w._sample_rate_in == 51200.0
         assert "cDAQ1Mod1" in w._required_devices
 
-    def test_connect_with_ni_task_object_calls_start(self, DAQHandler, wrapper_module):
-        """4.2 connect() with AITask object calls start() on the stored reference.
+    def test_connect_with_ni_task_object_calls_configure(self, DAQHandler, wrapper_module):
+        """4.2 connect() with AITask object calls configure() on the stored reference.
 
-        After the direct-delegation refactor, connect() calls start() directly
+        After the direct-delegation refactor, connect() calls configure() directly
         on the stored AITask object — no recreation, no constructor call.
         """
         mock_task = _make_mock_ai_task()
@@ -454,8 +454,8 @@ class TestConnectDisconnect:
         with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
             w.connect()
 
-        # start(start_task=False) must be called — Pitfall #5: wrapper must not auto-start
-        mock_task.start.assert_called_once_with(start_task=False)
+        # configure() must be called — Pitfall #5: wrapper must not auto-start
+        mock_task.configure.assert_called_once()
 
     def test_connect_closes_previous_tasks(self, DAQHandler, wrapper_module):
         """4.3 connect() closes previous tasks before opening new ones."""
@@ -496,8 +496,8 @@ class TestConnectDisconnect:
 
         assert result is False
 
-    def test_connect_with_obj_calls_start_directly(self, DAQHandler, wrapper_module):
-        """4.5 connect() calls start() directly on stored AITask — no recreation."""
+    def test_connect_with_obj_calls_configure_directly(self, DAQHandler, wrapper_module):
+        """4.5 connect() calls configure() directly on stored AITask — no recreation."""
         mock_task = _make_mock_ai_task()
 
         with patch.object(wrapper_module, "AITask", new=type(mock_task)):
@@ -508,14 +508,14 @@ class TestConnectDisconnect:
         with patch.object(wrapper_module, "get_connected_devices", return_value={"cDAQ1Mod1"}):
             w.connect()
 
-        # The stored reference itself receives start(start_task=False), not a new instance
-        mock_task.start.assert_called_once_with(start_task=False)
+        # The stored reference itself receives configure(), not a new instance
+        mock_task.configure.assert_called_once()
         assert w._task_in_obj is mock_task
 
-    def test_connect_with_ao_task_object_calls_start(
+    def test_connect_with_ao_task_object_calls_configure(
         self, DAQHandler, wrapper_module
     ):
-        """4.x connect() calls start() on stored AOTask object."""
+        """4.x connect() calls configure() on stored AOTask object."""
         mock_task_out = _make_mock_ao_task()
 
         with patch.object(wrapper_module, "AOTask", new=type(mock_task_out)):
@@ -526,7 +526,7 @@ class TestConnectDisconnect:
             w.connect()
 
         # Pitfall #5: wrapper must not auto-start output tasks either
-        mock_task_out.start.assert_called_once_with(start_task=False)
+        mock_task_out.configure.assert_called_once()
 
     def test_disconnect_closes_input_task(self, DAQHandler, wrapper_module):
         """4.6 disconnect() closes input task."""
@@ -1974,8 +1974,8 @@ class TestWriteDigital:
 class TestDigitalLifecycle:
     """Task group 24: Digital tasks in connect()/disconnect() lifecycle."""
 
-    def test_connect_starts_digital_input(self, DAQHandler, wrapper_module):
-        """7.1 connect() calls start() on configured DITask task."""
+    def test_connect_configures_digital_input(self, DAQHandler, wrapper_module):
+        """7.1 connect() calls configure() on configured DITask task."""
         mock_di = _make_mock_digital_input()
 
         with patch.object(wrapper_module, "DITask", new=_FakeDITask):
@@ -1985,12 +1985,11 @@ class TestDigitalLifecycle:
         with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
             w.connect()
 
-        # Digital tasks: start() with no args (unlike analog's start_task=False)
-        mock_di.start.assert_called_once_with()
+        mock_di.configure.assert_called_once()
         assert w._task_digital_in is mock_di
 
-    def test_connect_starts_digital_output(self, DAQHandler, wrapper_module):
-        """7.2 connect() calls start() on configured DOTask task."""
+    def test_connect_configures_digital_output(self, DAQHandler, wrapper_module):
+        """7.2 connect() calls configure() on configured DOTask task."""
         mock_do = _make_mock_digital_output()
 
         with patch.object(wrapper_module, "DOTask", new=_FakeDOTask):
@@ -2000,8 +1999,7 @@ class TestDigitalLifecycle:
         with patch.object(wrapper_module, "get_connected_devices", return_value=set()):
             w.connect()
 
-        # Digital tasks: start() with no args
-        mock_do.start.assert_called_once_with()
+        mock_do.configure.assert_called_once()
         assert w._task_digital_out is mock_do
 
     def test_connect_starts_both_analog_and_digital(self, DAQHandler, wrapper_module):
@@ -2024,8 +2022,8 @@ class TestDigitalLifecycle:
             result = w.connect()
 
         assert result is True
-        mock_di.start.assert_called_once_with()
-        mock_do.start.assert_called_once_with()
+        mock_di.configure.assert_called_once()
+        mock_do.configure.assert_called_once()
 
     def test_disconnect_clears_digital_input(self, DAQHandler, wrapper_module):
         """7.4 disconnect() calls clear_task() on active DITask task."""
@@ -2084,12 +2082,12 @@ class TestDigitalLifecycle:
 
         assert w._task_digital_in is mock_loaded
 
-    def test_connect_digital_start_failure_does_not_prevent_analog(
+    def test_connect_digital_configure_failure_does_not_prevent_analog(
         self, DAQHandler, wrapper_module
     ):
-        """7.8 Digital start() failure doesn't prevent analog connect()."""
+        """7.8 Digital configure() failure doesn't prevent analog connect()."""
         mock_di = _make_mock_digital_input()
-        mock_di.start.side_effect = RuntimeError("digital start failed")
+        mock_di.configure.side_effect = RuntimeError("digital configure failed")
         mock_loaded_task = _make_mock_nidaqmx_task()
 
         with patch.object(wrapper_module, "DITask", new=_FakeDITask):

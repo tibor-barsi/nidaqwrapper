@@ -401,7 +401,7 @@ class TestHandlerContextManager:
             new_task.add_channel(
                 "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
             )
-            new_task.start(start_task=False)
+            new_task.configure()
         finally:
             new_task.clear_task()
 
@@ -431,7 +431,7 @@ class TestHandlerContextManager:
             new_task.add_channel(
                 "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
             )
-            new_task.start(start_task=False)
+            new_task.configure()
         finally:
             new_task.clear_task()
 
