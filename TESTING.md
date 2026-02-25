@@ -6,8 +6,8 @@ nidaqwrapper uses a three-tier test strategy to balance speed, coverage, and har
 
 | Tier | Tests | Requirements | Purpose |
 |------|-------|-------------|---------|
-| **Mocked** | 630 | None | Fast unit tests with mocked nidaqmx for CI/CD |
-| **Simulated** | TBD | NI-DAQmx driver + simulated devices | Real driver API validation without physical hardware |
+| **Mocked** | 663 | None | Fast unit tests with mocked nidaqmx for CI/CD |
+| **Simulated** | 59 + 1 xfail | NI-DAQmx driver + simulated devices | Real driver API validation without physical hardware |
 | **Hardware** | 32 | Physical NI-DAQmx devices | Real-world timing, triggers, and signal validation |
 
 The simulated tier bridges the gap between mocked tests and hardware tests. All 4 bugs found during hardware testing were invisible to mocked tests because `MagicMock` auto-generates any attribute on access, masking real API mismatches. Simulated devices use the real NI-DAQmx driver with simulated hardware, catching API contract violations while remaining fast and deterministic.
@@ -35,7 +35,7 @@ The default `uv run pytest` excludes both simulated and hardware tests to ensure
 
 ## Test Tiers
 
-### Mocked Tests (630 tests)
+### Mocked Tests (663 tests)
 
 **What they test:**
 - Public API contracts (function signatures, return types)
@@ -285,7 +285,8 @@ Example:
 def test_ai_task_configuration(mock_task):
     task = AITask('test_task', sample_rate=25600)
     task.add_channel('ch0', device_ind=0, channel_ind=0, units='V')
-    assert task.name == 'test_task'
+    task.configure()
+    assert task.task_name == 'test_task'
     assert task.sample_rate == 25600
 ```
 
@@ -304,12 +305,13 @@ import pytest
 from nidaqwrapper import AITask
 
 @pytest.mark.simulated
-def test_ai_task_read(simulated_device_name):
+def test_ai_task_read(sim_device_index):
     task = AITask('sim_test', sample_rate=10000)
-    task.add_channel('ch0', device=simulated_device_name, channel_ind=0, units='V')
+    task.add_channel('ch0', device_ind=sim_device_index, channel_ind=0, units='V')
+    task.configure()
     task.start()
     data = task.acquire(n_samples=100)
-    assert data.shape == (4, 100)  # 4 channels (default), 100 samples
+    assert data.shape == (1, 100)  # 1 channel, 100 samples
     assert data.dtype == np.float64
     task.clear_task()
 ```
@@ -334,8 +336,9 @@ def test_accelerometer_acquisition():
     - Accelerometer connected to channel 0
     """
     task = AITask('accel_test', sample_rate=25600)
-    task.add_channel('accel', device='cDAQ1Mod1', channel_ind=0,
+    task.add_channel('accel', device_ind=1, channel_ind=0,
                      sensitivity=100, sensitivity_units='mV/g', units='g')
+    task.configure()
     task.start()
     data = task.acquire(n_samples=1000)
     assert data.shape == (1, 1000)

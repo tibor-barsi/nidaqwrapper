@@ -56,6 +56,8 @@ wrapper.disconnect()
 - **TOML configuration** -- `save_config()` / `from_config()` for portable, human-readable task definitions with device aliases
 - **Device discovery** -- `list_devices()`, `list_tasks()`, `get_connected_devices()` for hardware enumeration
 - **Raw task injection** -- `from_task()` on all task classes wraps pre-configured `nidaqmx.Task` objects
+- **Factory classmethods** -- `from_name()` creates tasks from device name, `from_config()` from TOML
+- **System introspection** -- `system_info()` returns structured device/driver/task inventory
 - **Context manager support** -- automatic resource cleanup with `with` statements
 - **Thread safety** -- `DAQHandler` and `MultiHandler` use per-instance `RLock` for concurrent access
 
@@ -80,7 +82,7 @@ from nidaqwrapper import DOTask
 
 with DOTask('relay_control') as do:
     do.add_channel('relays', lines='Dev1/port0/line0:3')
-    do.start()
+    do.configure()
     do.write([True, False, True, False])
 ```
 
@@ -91,7 +93,7 @@ from nidaqwrapper import DITask
 
 with DITask('switches') as di:
     di.add_channel('sw', lines='Dev1/port0/line0:3')
-    di.start()
+    di.configure()
     state = di.read()  # array of bool values, one per line
 ```
 
@@ -103,6 +105,7 @@ from nidaqwrapper import AOTask
 
 task = AOTask('sig_gen', sample_rate=10000)
 task.add_channel('ao_0', device_ind=0, channel_ind=0)
+task.configure()
 task.start()
 
 t = np.linspace(0, 1, 10000)
@@ -126,6 +129,7 @@ task.clear_task()
 
 # Recreate the same task on another machine
 task = AITask.from_config('vibration.toml')
+task.configure()
 task.start()
 ```
 
@@ -196,6 +200,7 @@ raw_task.close()  # Caller retains ownership
 
 | Class | Module | Purpose |
 |-------|--------|---------|
+| `BaseTask` | `base_task` | Shared lifecycle, properties, `start()`, `from_task()`, `from_name()` |
 | `AITask` | `ai_task` | Analog input -- channels, timing, acquisition |
 | `AOTask` | `ao_task` | Analog output -- channels, timing, generation |
 | `DITask` | `digital` | Digital input -- on-demand and clocked reads |
@@ -216,6 +221,7 @@ raw_task.close()  # Caller retains ownership
 | `list_tasks()` | List tasks saved in NI MAX |
 | `get_connected_devices()` | Get set of connected device name strings |
 | `get_task_by_name(name)` | Load a pre-configured task from NI MAX |
+| `system_info()` | Structured dict of driver version, devices, and persisted tasks |
 | `UNITS` | Dict mapping unit strings (`'g'`, `'mV/g'`, `'V'`, etc.) to nidaqmx constants |
 
 ## Data Format
@@ -247,7 +253,7 @@ nidaqwrapper uses a three-tier test strategy:
 | Simulated | `uv run pytest -m simulated -v` | NI-DAQmx driver + simulated device |
 | Hardware | `uv run pytest -m hardware -v` | Physical NI hardware |
 
-The mocked tier (630 tests) runs by default and requires no NI-DAQmx driver. The simulated tier uses the real driver with simulated devices to catch API contract violations. The hardware tier validates real-world timing and physical signals.
+The mocked tier (663 tests) runs by default and requires no NI-DAQmx driver. The simulated tier uses the real driver with simulated devices to catch API contract violations. The hardware tier validates real-world timing and physical signals.
 
 See [TESTING.md](TESTING.md) for detailed setup instructions, troubleshooting, and how to configure simulated devices.
 
