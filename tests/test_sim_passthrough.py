@@ -182,7 +182,7 @@ class TestExternalTaskRestrictions:
             wrapper = AITask.from_task(raw_task)
 
             # Attempt to configure via wrapper — should raise RuntimeError
-            with pytest.raises(RuntimeError, match="Cannot start"):
+            with pytest.raises(RuntimeError, match="Cannot configure"):
                 wrapper.configure()
         finally:
             wrapper.clear_task()

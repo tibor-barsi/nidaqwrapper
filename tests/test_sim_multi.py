@@ -18,7 +18,7 @@ from nidaqwrapper import AITask, MultiHandler
 class TestMultiHandlerBasics:
     """Basic MultiHandler configuration and software trigger tests."""
 
-    def test_single_task_software_trigger(self, simulated_device_name):
+    def test_single_task_software_trigger(self, sim_device_index):
         """Test software trigger acquisition with a single AI task.
 
         Creates one AITask with 2 channels, starts it, configures MultiHandler,
@@ -27,10 +27,11 @@ class TestMultiHandlerBasics:
         """
         # Create AITask with 2 channels
         ai_task = AITask("test_multi_single", sample_rate=10000)
+        handler = None
         try:
             ai_task.add_channel(
                 "ai0",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=0,
                 units="V",
                 min_val=-10.0,
@@ -38,7 +39,7 @@ class TestMultiHandlerBasics:
             )
             ai_task.add_channel(
                 "ai1",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=1,
                 units="V",
                 min_val=-10.0,
@@ -78,9 +79,10 @@ class TestMultiHandlerBasics:
                 )
         finally:
             ai_task.clear_task()
-            handler.disconnect()
+            if handler is not None:
+                handler.disconnect()
 
-    def test_multi_task_validation(self, simulated_device_name):
+    def test_multi_task_validation(self, sim_device_index):
         """Test validation when configuring multiple AI tasks.
 
         Creates two AITasks on different channel sets, both at 10kHz, starts
@@ -90,12 +92,13 @@ class TestMultiHandlerBasics:
         # Create first AITask with channels ai0:1
         ai_task1 = AITask("test_multi_task1", sample_rate=10000)
         ai_task2 = AITask("test_multi_task2", sample_rate=10000)
+        handler = None
 
         try:
             # Configure first task: ai0, ai1
             ai_task1.add_channel(
                 "ai0",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=0,
                 units="V",
                 min_val=-10.0,
@@ -103,7 +106,7 @@ class TestMultiHandlerBasics:
             )
             ai_task1.add_channel(
                 "ai1",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=1,
                 units="V",
                 min_val=-10.0,
@@ -114,7 +117,7 @@ class TestMultiHandlerBasics:
             # Configure second task: ai2, ai3
             ai_task2.add_channel(
                 "ai2",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=2,
                 units="V",
                 min_val=-10.0,
@@ -122,7 +125,7 @@ class TestMultiHandlerBasics:
             )
             ai_task2.add_channel(
                 "ai3",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=3,
                 units="V",
                 min_val=-10.0,
@@ -153,19 +156,21 @@ class TestMultiHandlerBasics:
         finally:
             ai_task1.clear_task()
             ai_task2.clear_task()
-            handler.disconnect()
+            if handler is not None:
+                handler.disconnect()
 
-    def test_trigger_type_detection_no_hardware(self, simulated_device_name):
+    def test_trigger_type_detection_no_hardware(self, sim_device_index):
         """Test that trigger_type is set to 'software' when no hardware triggers exist.
 
         Creates a task without hardware triggers, configures MultiHandler,
         verifies trigger_type == 'software'.
         """
         ai_task = AITask("test_trigger_detect", sample_rate=10000)
+        handler = None
         try:
             ai_task.add_channel(
                 "ai0",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=0,
                 units="V",
                 min_val=-10.0,
@@ -183,27 +188,29 @@ class TestMultiHandlerBasics:
                 "trigger is configured (bug fix #2)"
             )
         finally:
-            handler.disconnect()
             ai_task.clear_task()
+            if handler is not None:
+                handler.disconnect()
 
 
 @pytest.mark.simulated
 class TestMultiHandlerSampleRateMismatch:
     """Test validation failure when tasks have different sample rates."""
 
-    def test_sample_rate_mismatch_rejected(self, simulated_device_name):
+    def test_sample_rate_mismatch_rejected(self, sim_device_index):
         """Test that configure() returns False when tasks have different sample rates.
 
         Creates two AITasks with different sample rates, verifies configure() rejects them.
         """
         ai_task1 = AITask("test_mismatch1", sample_rate=10000)
         ai_task2 = AITask("test_mismatch2", sample_rate=20000)
+        handler = None
 
         try:
             # Configure both tasks
             ai_task1.add_channel(
                 "ai0",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=0,
                 units="V",
             )
@@ -211,7 +218,7 @@ class TestMultiHandlerSampleRateMismatch:
 
             ai_task2.add_channel(
                 "ai1",
-                device_ind=0,
+                device_ind=sim_device_index,
                 channel_ind=1,
                 units="V",
             )
@@ -227,6 +234,7 @@ class TestMultiHandlerSampleRateMismatch:
                 "configure() should return False when tasks have different sample rates"
             )
         finally:
-            handler.disconnect()
             ai_task1.clear_task()
             ai_task2.clear_task()
+            if handler is not None:
+                handler.disconnect()
