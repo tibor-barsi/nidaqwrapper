@@ -22,12 +22,11 @@ from __future__ import annotations
 import pathlib
 import warnings
 from datetime import datetime
-from typing import Any
 
 import numpy as np
 
 from .base_task import BaseTask
-from .utils import UNITS, _require_nidaqmx
+from .utils import UNITS, UNITS_REVERSE, _require_nidaqmx
 
 try:
     import nidaqmx
@@ -98,11 +97,6 @@ class AITask(BaseTask):
             )
 
         self.sample_mode = constants.AcquisitionType.CONTINUOUS
-
-        # Track original add_channel() parameters for TOML serialisation.
-        # The nidaqmx task stores resolved constants; we need the original
-        # strings (e.g. "mV/g") to write a human-readable config file.
-        self._channel_configs: list[dict[str, Any]] = []
 
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
@@ -311,20 +305,6 @@ class AITask(BaseTask):
                 options["units"] = resolved_units
             self.task.ai_channels.add_ai_voltage_chan(**options)
 
-        # Record original parameters after a successful nidaqmx call so that
-        # save_config() can serialise human-readable strings (not resolved
-        # nidaqmx constants).
-        self._channel_configs.append({
-            "name": channel_name,
-            "device_ind": device_ind,
-            "channel_ind": channel_ind,
-            "sensitivity": sensitivity,
-            "sensitivity_units": sensitivity_units,
-            "units": units,
-            "scale": scale,
-            "min_val": min_val,
-            "max_val": max_val,
-        })
 
     # -- Task lifecycle ------------------------------------------------------
 
@@ -415,7 +395,9 @@ class AITask(BaseTask):
     def save_config(self, path: str | pathlib.Path) -> None:
         """Serialise the task configuration to a TOML file.
 
-        Writes a human-readable TOML file that can be loaded back with
+        Reads channel information directly from ``self.task.ai_channels``
+        (the nidaqmx Task is the single source of truth).  Writes a
+        human-readable TOML file that can be loaded back with
         :meth:`from_config` to recreate the same task on any compatible
         hardware.  Device names are replaced by short aliases in
         ``[devices]`` so that changing chassis enumeration only requires
@@ -430,20 +412,24 @@ class AITask(BaseTask):
         -----
         TOML is generated with simple string formatting — no third-party
         library is required for writing.  ``min_val`` / ``max_val`` are
-        omitted when they were not provided (``None``); ``0.0`` is a
-        valid value and is preserved (uses ``is not None`` check).
+        always written (read from ``channel.ai_rng_low`` /
+        ``channel.ai_rng_high``).  For custom-scale channels, ``units``
+        is omitted (the scale's output unit string is not recoverable
+        from the nidaqmx channel object).
 
         Examples
         --------
         >>> task.save_config("/tmp/vibration.toml")
         """
-        # Build alias → device_name map for every unique device used.
-        # Aliases are assigned in the order channels were added: dev0, dev1 …
-        device_alias: dict[int, str] = {}
-        for cfg in self._channel_configs:
-            ind = cfg["device_ind"]
-            if ind not in device_alias:
-                device_alias[ind] = f"dev{len(device_alias)}"
+        # Build device alias map from unique device names in channel order
+        device_names_seen: list[str] = []
+        for ch in self.task.ai_channels:
+            dev = ch.physical_channel.name.rsplit("/", 1)[0]
+            if dev not in device_names_seen:
+                device_names_seen.append(dev)
+        device_to_alias: dict[str, str] = {
+            name: f"dev{i}" for i, name in enumerate(device_names_seen)
+        }
 
         lines: list[str] = []
 
@@ -461,36 +447,63 @@ class AITask(BaseTask):
 
         # [devices] section
         lines.append("[devices]")
-        for ind, alias in device_alias.items():
-            device_name = self.device_list[ind]
-            product_type = self.device_product_type[ind]
-            lines.append(f'{alias} = "{device_name}"  # {product_type}')
+        for dev_name, alias in device_to_alias.items():
+            try:
+                dev_idx = self.device_list.index(dev_name)
+                product_type = self.device_product_type[dev_idx]
+                lines.append(f'{alias} = "{dev_name}"  # {product_type}')
+            except (ValueError, IndexError):
+                lines.append(f'{alias} = "{dev_name}"')
         lines.append("")
 
-        # [[channels]] entries
-        for cfg in self._channel_configs:
-            alias = device_alias[cfg["device_ind"]]
+        # [[channels]] entries — read all info from the live task channels
+        for ch in self.task.ai_channels:
+            phys = ch.physical_channel.name
+            dev_name = phys.rsplit("/", 1)[0]
+            ch_spec = phys.rsplit("/", 1)[1]
+            channel_ind = int(ch_spec.lstrip("ai"))
+            alias = device_to_alias[dev_name]
+            meas_type = ch.ai_meas_type
+
             lines.append("[[channels]]")
-            lines.append(f'name = "{cfg["name"]}"')
+            lines.append(f'name = "{ch.name}"')
             lines.append(f'device = "{alias}"')
-            lines.append(f'channel = {cfg["channel_ind"]}')
-            if cfg["sensitivity"] is not None:
-                lines.append(f'sensitivity = {cfg["sensitivity"]}')
-            if cfg["sensitivity_units"] is not None:
-                lines.append(f'sensitivity_units = "{cfg["sensitivity_units"]}"')
-            lines.append(f'units = "{cfg["units"]}"')
-            if cfg["scale"] is not None:
-                scale = cfg["scale"]
-                if isinstance(scale, tuple):
-                    slope, y_intercept = float(scale[0]), float(scale[1])
+            lines.append(f"channel = {channel_ind}")
+
+            if meas_type == constants.UsageTypeAI.ACCELERATION_ACCELEROMETER_CURRENT_INPUT:
+                lines.append(f"sensitivity = {ch.ai_accel_sensitivity}")
+                sens_units_str = UNITS_REVERSE.get(
+                    ch.ai_accel_sensitivity_units, str(ch.ai_accel_sensitivity_units)
+                )
+                lines.append(f'sensitivity_units = "{sens_units_str}"')
+                units_str = UNITS_REVERSE.get(ch.ai_accel_units, str(ch.ai_accel_units))
+                lines.append(f'units = "{units_str}"')
+
+            elif meas_type == constants.UsageTypeAI.FORCE_IEPE_SENSOR:
+                lines.append(f"sensitivity = {ch.ai_force_iepe_sensor_sensitivity}")
+                sens_units_str = UNITS_REVERSE.get(
+                    ch.ai_force_iepe_sensor_sensitivity_units,
+                    str(ch.ai_force_iepe_sensor_sensitivity_units),
+                )
+                lines.append(f'sensitivity_units = "{sens_units_str}"')
+                units_str = UNITS_REVERSE.get(ch.ai_force_units, str(ch.ai_force_units))
+                lines.append(f'units = "{units_str}"')
+
+            else:
+                # Voltage path (plain voltage or custom scale)
+                scale_name = ch.ai_custom_scale.name
+                if scale_name:
+                    slope = ch.ai_custom_scale.lin_slope
+                    y_int = ch.ai_custom_scale.lin_y_intercept
+                    lines.append(f"scale = [{slope}, {y_int}]")
                 else:
-                    slope, y_intercept = float(scale), 0.0
-                lines.append(f"scale = [{slope}, {y_intercept}]")
-            # Use is not None so that 0.0 is written correctly
-            if cfg["min_val"] is not None:
-                lines.append(f"min_val = {cfg['min_val']}")
-            if cfg["max_val"] is not None:
-                lines.append(f"max_val = {cfg['max_val']}")
+                    units_str = UNITS_REVERSE.get(
+                        ch.ai_voltage_units, str(ch.ai_voltage_units)
+                    )
+                    lines.append(f'units = "{units_str}"')
+
+            lines.append(f"min_val = {ch.ai_rng_low}")
+            lines.append(f"max_val = {ch.ai_rng_high}")
             lines.append("")
 
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
@@ -596,7 +609,9 @@ class AITask(BaseTask):
         return task
 
     @classmethod
-    def from_task(cls, task: nidaqmx.task.Task) -> AITask:
+    def from_task(
+        cls, task: nidaqmx.task.Task, take_ownership: bool = False
+    ) -> AITask:
         """Wrap a pre-created ``nidaqmx.task.Task`` object.
 
         Creates an :class:`AITask` instance that wraps an existing nidaqmx
@@ -604,16 +619,23 @@ class AITask(BaseTask):
         advanced users who need to configure task properties not exposed by
         the wrapper API.
 
-        When wrapping an external task, :meth:`add_channel`, :meth:`configure`,
-        and :meth:`start` are blocked — the caller is responsible for
-        configuring and starting the task before or after wrapping it.  :meth:`clear_task` and
-        ``__exit__`` will NOT close the task; the caller must call
-        ``task.close()`` when done.
+        By default, the wrapper does NOT own the task: :meth:`add_channel`,
+        :meth:`configure`, and :meth:`start` are blocked, and
+        :meth:`clear_task` / ``__exit__`` will NOT close the task.
+        Pass ``take_ownership=True`` to transfer ownership — the wrapper will
+        then permit all mutating methods and will close the task on
+        :meth:`clear_task`.
 
         Parameters
         ----------
         task : nidaqmx.task.Task
             A pre-created nidaqmx Task object with at least one AI channel.
+        take_ownership : bool, optional
+            If ``True``, the wrapper takes ownership of the task and all
+            mutating methods (add_channel, configure, start, clear_task)
+            are permitted.  The task will be closed when :meth:`clear_task`
+            is called.  Default is ``False`` (original behaviour: task is
+            not owned, mutating methods raise ``RuntimeError``).
 
         Returns
         -------
@@ -669,11 +691,9 @@ class AITask(BaseTask):
         instance.sample_rate = float(task.timing.samp_clk_rate)
         instance.sample_mode = task.timing.samp_quant_samp_mode
 
-        # Channel configs: not available for external tasks (no serialisation)
-        instance._channel_configs = []
-
-        # Ownership: this task was NOT created by us
-        instance._owns_task = False
+        # Ownership flag: controls whether mutating methods are permitted
+        # and whether clear_task() closes the underlying nidaqmx task.
+        instance._owns_task = take_ownership
 
         return instance
 

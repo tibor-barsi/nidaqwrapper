@@ -55,18 +55,50 @@ MOCK_UNITS = _make_mock_units()
 # Helpers — mock nidaqmx.Task that tracks channel additions
 # ---------------------------------------------------------------------------
 
-def _make_mock_ni_task(samp_clk_rate=25600):
+def _make_mock_ni_task(samp_clk_rate=25600, usage_type_constants=None):
     """Create a mock nidaqmx.Task that tracks channel additions.
 
     The mock records all add_ai_*_chan() calls and maintains a channel list
     so that duplicate detection (via task.channel_names and ai_channels
     iteration) works correctly in the implementation under test.
+
+    Each channel object is populated with the attributes that the new
+    save_config() reads directly from self.task.ai_channels:
+    - ai_meas_type, ai_accel_sensitivity, ai_accel_sensitivity_units,
+      ai_accel_units (for accel channels)
+    - ai_force_iepe_sensor_sensitivity, ai_force_iepe_sensor_sensitivity_units,
+      ai_force_units (for force channels)
+    - ai_voltage_units (for voltage channels)
+    - ai_custom_scale.name, ai_custom_scale.lin_slope, ai_custom_scale.lin_y_intercept
+    - ai_rng_low, ai_rng_high (always present)
+
+    Parameters
+    ----------
+    samp_clk_rate : float
+        Mock sample clock rate for timing assertions.
+    usage_type_constants : object, optional
+        Object whose ``UsageTypeAI`` attribute provides the ``ai_meas_type``
+        sentinel values stored on channel mocks.  When provided (typically
+        ``mock_constants`` from the fixture), the values match whatever
+        ``save_config()`` sees as ``constants.UsageTypeAI.*`` at call time,
+        so branch comparisons work correctly.  When ``None``, falls back to
+        real nidaqmx constants (suitable for tests that do not call
+        ``save_config()``).
     """
+    # Determine which UsageTypeAI constants to store on channel mocks.
+    # Must match what save_config() sees as constants.UsageTypeAI.* at
+    # the time it runs (either real or patched mock_constants).
+    if usage_type_constants is not None:
+        _usage = usage_type_constants
+    else:
+        from nidaqmx import constants as _real_constants
+        _usage = _real_constants
+
     task = MagicMock()
     _channel_names = []
     _channel_objects = []
 
-    def _make_handler():
+    def _make_accel_handler():
         def handler(**kwargs):
             name = kwargs.get("name_to_assign_to_channel", "")
             phys = kwargs.get("physical_channel", "")
@@ -75,26 +107,88 @@ def _make_mock_ni_task(samp_clk_rate=25600):
             ch.name = name
             ch.physical_channel = MagicMock()
             ch.physical_channel.name = phys
+            # Populate AI channel attributes for save_config()
+            ch.ai_meas_type = _usage.UsageTypeAI.ACCELERATION_ACCELEROMETER_CURRENT_INPUT
+            ch.ai_accel_sensitivity = kwargs.get("sensitivity", 100.0)
+            ch.ai_accel_sensitivity_units = kwargs.get("sensitivity_units")
+            ch.ai_accel_units = kwargs.get("units")
+            ch.ai_rng_low = kwargs.get("min_val", -5.0)
+            ch.ai_rng_high = kwargs.get("max_val", 5.0)
+            # No custom scale for accel channels
+            ch.ai_custom_scale = MagicMock()
+            ch.ai_custom_scale.name = ""
             _channel_objects.append(ch)
         return handler
 
-    task.ai_channels.add_ai_accel_chan.side_effect = _make_handler()
-    task.ai_channels.add_ai_force_iepe_chan.side_effect = _make_handler()
-    task.ai_channels.add_ai_voltage_chan.side_effect = _make_handler()
+    def _make_force_handler():
+        def handler(**kwargs):
+            name = kwargs.get("name_to_assign_to_channel", "")
+            phys = kwargs.get("physical_channel", "")
+            _channel_names.append(name)
+            ch = MagicMock()
+            ch.name = name
+            ch.physical_channel = MagicMock()
+            ch.physical_channel.name = phys
+            ch.ai_meas_type = _usage.UsageTypeAI.FORCE_IEPE_SENSOR
+            ch.ai_force_iepe_sensor_sensitivity = kwargs.get("sensitivity", 22.5)
+            ch.ai_force_iepe_sensor_sensitivity_units = kwargs.get("sensitivity_units")
+            ch.ai_force_units = kwargs.get("units")
+            ch.ai_rng_low = kwargs.get("min_val", -5.0)
+            ch.ai_rng_high = kwargs.get("max_val", 5.0)
+            ch.ai_custom_scale = MagicMock()
+            ch.ai_custom_scale.name = ""
+            _channel_objects.append(ch)
+        return handler
+
+    def _make_voltage_handler():
+        def handler(**kwargs):
+            name = kwargs.get("name_to_assign_to_channel", "")
+            phys = kwargs.get("physical_channel", "")
+            _channel_names.append(name)
+            ch = MagicMock()
+            ch.name = name
+            ch.physical_channel = MagicMock()
+            ch.physical_channel.name = phys
+            ch.ai_meas_type = _usage.UsageTypeAI.VOLTAGE
+            ch.ai_voltage_units = kwargs.get("units")
+            ch.ai_rng_low = kwargs.get("min_val", -5.0)
+            ch.ai_rng_high = kwargs.get("max_val", 5.0)
+            # Custom scale handling: if custom_scale_name kwarg present, set name
+            custom_scale_name = kwargs.get("custom_scale_name", "")
+            ch.ai_custom_scale = MagicMock()
+            ch.ai_custom_scale.name = custom_scale_name
+            if custom_scale_name:
+                # Populated by Scale.create_lin_scale mock in test
+                ch.ai_custom_scale.lin_slope = 0.0
+                ch.ai_custom_scale.lin_y_intercept = 0.0
+            _channel_objects.append(ch)
+        return handler
+
+    task.ai_channels.add_ai_accel_chan.side_effect = _make_accel_handler()
+    task.ai_channels.add_ai_force_iepe_chan.side_effect = _make_force_handler()
+    task.ai_channels.add_ai_voltage_chan.side_effect = _make_voltage_handler()
 
     # channel_names: same list object, stays in sync as channels are added
     task.channel_names = _channel_names
 
-    # ai_channels iteration (for physical channel duplicate detection)
+    # ai_channels iteration (for physical channel duplicate detection and save_config)
     task.ai_channels.__iter__ = MagicMock(
         side_effect=lambda: iter(_channel_objects)
     )
+
+    # Expose the internal channel objects list so tests can set attributes
+    # after add_channel() (e.g. to set custom_scale.lin_slope)
+    task._channel_objects = _channel_objects
 
     # Timing (for configure() tests)
     task._timing.samp_clk_rate = samp_clk_rate
     task.timing.samp_clk_rate = samp_clk_rate
 
     return task
+
+
+# Build MOCK_UNITS_REVERSE for patching UNITS_REVERSE in save_config tests
+MOCK_UNITS_REVERSE = {v: k for k, v in MOCK_UNITS.items()}
 
 
 def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
@@ -119,7 +213,10 @@ def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
         samp_clk_rate = sample_rate
 
     system = mock_system(task_names=task_names)
-    mock_ni_task = _make_mock_ni_task(samp_clk_rate=samp_clk_rate)
+    mock_ni_task = _make_mock_ni_task(
+        samp_clk_rate=samp_clk_rate,
+        usage_type_constants=mock_constants,
+    )
 
     stack = ExitStack()
     stack.enter_context(
@@ -132,6 +229,9 @@ def _build(mock_system, mock_constants, sample_rate=25600, samp_clk_rate=None,
     )
     stack.enter_context(
         patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS)
+    )
+    stack.enter_context(
+        patch("nidaqwrapper.ai_task.UNITS_REVERSE", MOCK_UNITS_REVERSE)
     )
     stack.enter_context(
         patch("nidaqwrapper.ai_task.constants", mock_constants)
@@ -1181,21 +1281,26 @@ except ModuleNotFoundError:
 
 
 class TestSaveConfig:
-    """save_config() serialises the task configuration to TOML."""
+    """save_config() serialises the task configuration to TOML.
+
+    Note: save_config() is called INSIDE the ``with ctx:`` block so that
+    UNITS_REVERSE (patched in _build) is active when save_config() runs.
+    The new save_config() reads from self.task.ai_channels and uses
+    UNITS_REVERSE to convert nidaqmx constants back to unit strings.
+    """
 
     def test_writes_toml_file(self, mock_system, mock_constants, tmp_path):
         """save_config() creates a file that can be parsed as TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         assert path.exists()
-
         with open(path, "rb") as f:
             data = tomllib.load(f)
         assert "task" in data
@@ -1205,14 +1310,14 @@ class TestSaveConfig:
     def test_task_section(self, mock_system, mock_constants, tmp_path):
         """[task] section contains name, sample_rate, and type='input'."""
         ctx, task, mt = _build(mock_system, mock_constants, sample_rate=51200)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1223,6 +1328,7 @@ class TestSaveConfig:
     def test_devices_section(self, mock_system, mock_constants, tmp_path):
         """[devices] section contains unique device aliases for used devices."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
@@ -1232,9 +1338,8 @@ class TestSaveConfig:
                 "accel_y", device_ind=1, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1248,15 +1353,15 @@ class TestSaveConfig:
     def test_channel_entries(self, mock_system, mock_constants, tmp_path):
         """[[channels]] entries contain name, device alias, channel, units, etc."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=2,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=-50.0, max_val=50.0,
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1276,14 +1381,14 @@ class TestSaveConfig:
     def test_force_channel(self, mock_system, mock_constants, tmp_path):
         """Force/IEPE channel is saved correctly in TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "force_1", device_ind=0, channel_ind=0,
                 sensitivity=22.5, sensitivity_units="mV/N", units="N",
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1296,15 +1401,15 @@ class TestSaveConfig:
     def test_min_val_zero_preserved(self, mock_system, mock_constants, tmp_path):
         """min_val=0.0 is saved in TOML (not treated as falsy)."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=0.0, max_val=50.0,
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1315,11 +1420,11 @@ class TestSaveConfig:
     def test_voltage_channel_no_sensitivity(self, mock_system, mock_constants, tmp_path):
         """Voltage channels omit sensitivity/sensitivity_units from TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel("v1", device_ind=0, channel_ind=0, units="V")
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
@@ -1329,8 +1434,9 @@ class TestSaveConfig:
         assert "sensitivity_units" not in ch
 
     def test_scale_channel(self, mock_system, mock_constants, tmp_path):
-        """Channel with custom scale saves scale value in TOML."""
+        """Channel with custom scale saves scale value in TOML, omits units."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as ms:
                 ms.return_value.name = "v1_scale"
@@ -1338,44 +1444,55 @@ class TestSaveConfig:
                     "v1", device_ind=0, channel_ind=0,
                     units="V", scale=(2500.0, -100.0),
                 )
+            # Set the custom scale slope/y_intercept on the channel mock
+            # (save_config reads these from ch.ai_custom_scale)
+            mt._channel_objects[0].ai_custom_scale.lin_slope = 2500.0
+            mt._channel_objects[0].ai_custom_scale.lin_y_intercept = -100.0
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
         ch = data["channels"][0]
         assert ch["scale"] == [2500.0, -100.0]
+        # units is omitted for custom scale channels
+        assert "units" not in ch
 
-    def test_min_max_omitted_when_none(self, mock_system, mock_constants, tmp_path):
-        """min_val/max_val are not in TOML when they were None."""
+    def test_min_max_always_written(self, mock_system, mock_constants, tmp_path):
+        """min_val/max_val are always written in TOML (read from nidaqmx channel).
+
+        The new save_config() reads ai_rng_low/ai_rng_high from the nidaqmx
+        channel object, which always has values after channel creation.
+        When add_channel() is called without explicit min/max, the mock
+        defaults to -5.0 and 5.0.
+        """
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
+            task.save_config(path)
 
-        path = tmp_path / "config.toml"
-        task.save_config(path)
         with open(path, "rb") as f:
             data = tomllib.load(f)
 
         ch = data["channels"][0]
-        assert "min_val" not in ch
-        assert "max_val" not in ch
+        # min_val and max_val are always present (read from mock ai_rng_low/high)
+        assert "min_val" in ch
+        assert "max_val" in ch
 
     def test_header_comment_with_timestamp(self, mock_system, mock_constants, tmp_path):
         """save_config() includes header comment with version and timestamp."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
-
-        path = tmp_path / "config.toml"
-        task.save_config(path)
+            task.save_config(path)
 
         content = path.read_text()
         lines = content.splitlines()
@@ -1401,14 +1518,13 @@ class TestSaveConfig:
     def test_device_product_type_comments(self, mock_system, mock_constants, tmp_path):
         """save_config() annotates device lines with product type comments."""
         ctx, task, mt = _build(mock_system, mock_constants)
+        path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
                 "accel_x", device_ind=0, channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
-
-        path = tmp_path / "config.toml"
-        task.save_config(path)
+            task.save_config(path)
 
         content = path.read_text()
         assert "# NI 9234" in content
@@ -1863,7 +1979,10 @@ class TestConfigRoundtrip:
 
     def test_roundtrip_accel(self, mock_system, mock_constants, tmp_path):
         """Accel channel survives a save/load roundtrip."""
-        # Create and configure original task
+        # Create and configure original task; save_config must run inside ctx
+        # so that constants and UNITS_REVERSE are patched consistently with
+        # the channel mock objects created by add_channel().
+        path = tmp_path / "config.toml"
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
@@ -1871,9 +1990,7 @@ class TestConfigRoundtrip:
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=-50.0, max_val=50.0,
             )
-
-        path = tmp_path / "config.toml"
-        task.save_config(path)
+            task.save_config(path)
 
         # Load back via from_config
         system = mock_system(task_names=[])
@@ -2160,6 +2277,138 @@ class TestFromTask:
         # clear_task() should close the task
         task.clear_task()
         mt.close.assert_called_once()
+
+
+class TestFromTaskTakeOwnership:
+    """from_task(task, take_ownership=True) makes the wrapper own the task."""
+
+    def _make_external_task(self, mock_system, mock_constants):
+        """Create a mock nidaqmx.Task with one AI channel."""
+        mock_ni_task = MagicMock()
+        mock_ni_task.name = "external_task"
+        mock_ni_task.timing.samp_clk_rate = 25600
+        mock_ni_task.timing.samp_quant_samp_mode = mock_constants.AcquisitionType.CONTINUOUS
+        mock_ch = MagicMock()
+        mock_ch.name = "ai0"
+        mock_ch.physical_channel = MagicMock()
+        mock_ch.physical_channel.name = "Dev1/ai0"
+        mock_ni_task.ai_channels = [mock_ch]
+        mock_ni_task.channel_names = ["ai0"]
+        mock_ni_task.is_task_done.return_value = True
+        return mock_ni_task
+
+    def test_default_not_owned(self, mock_system, mock_constants):
+        """from_task(task) with default take_ownership=False sets _owns_task=False."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext)
+
+        assert task._owns_task is False
+
+    def test_take_ownership_sets_owns_task(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True) sets _owns_task=True."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext, take_ownership=True)
+
+        assert task._owns_task is True
+
+    def test_add_channel_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).add_channel() does not raise."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+        # Set up ai_channels as a MagicMock that supports iteration
+        ai_channels_mock = MagicMock()
+        ai_channels_mock.__iter__ = MagicMock(return_value=iter([]))
+        ai_channels_mock.__len__ = MagicMock(return_value=1)
+        ext.ai_channels = ai_channels_mock
+        ext.channel_names = []
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.UNITS_REVERSE", MOCK_UNITS_REVERSE),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext, take_ownership=True)
+            # Should not raise RuntimeError
+            task.add_channel(
+                "new_ch", device_ind=0, channel_ind=1,
+                sensitivity=100.0, sensitivity_units="mV/g", units="g",
+            )
+
+    def test_configure_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).configure() does not raise RuntimeError."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+        # Set up timing mock to return requested rate unchanged
+        ext.timing.samp_clk_rate = 25600
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext, take_ownership=True)
+            # configure() should not raise RuntimeError (ownership check passes)
+            task.configure()
+
+    def test_clear_task_closes_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).clear_task() calls task.close()."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext, take_ownership=True)
+            task.clear_task()
+
+        ext.close.assert_called_once()
+
+    def test_add_channel_blocked_when_not_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=False).add_channel() raises RuntimeError."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
+            patch("nidaqwrapper.ai_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ai_task import AITask
+            task = AITask.from_task(ext, take_ownership=False)
+
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel(
+                    "new_ch", device_ind=0, channel_ind=1,
+                    sensitivity=100.0, sensitivity_units="mV/g", units="g",
+                )
 
 
 class TestFromName:
