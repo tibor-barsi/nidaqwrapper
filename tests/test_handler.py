@@ -996,18 +996,20 @@ class TestReadAllAvailable:
     """Task group 10: acquire() for LDAQ integration."""
 
     def test_acquire_transposes(self, DAQHandler, wrapper_module):
-        """10.1 acquire() returns (n_samples, n_channels)."""
+        """10.1 read_all_available() returns (n_samples, n_channels) without double-transpose."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
         w._connected = True
 
-        # Mock the AITask's acquire returning (n_channels, n_samples)
+        # AITask.acquire() now returns (n_samples, n_channels) — 3 samples, 2 channels
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire.return_value = np.array([[1, 2, 3], [4, 5, 6]])
+        mock_ni_task.acquire.return_value = np.array([[1, 4], [2, 5], [3, 6]])
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()
         assert result.shape == (3, 2)  # (n_samples, n_channels)
+        # Verify data passes through without double-transposition
+        np.testing.assert_array_equal(result, np.array([[1, 4], [2, 5], [3, 6]]))
 
     def test_acquire_empty(self, DAQHandler, wrapper_module):
         """10.2 read_all_available() returns empty array when no data."""
@@ -1017,7 +1019,8 @@ class TestReadAllAvailable:
         w._n_channels_in = 2
 
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire.return_value = np.empty((2, 0))
+        # AITask.acquire() returns (0, 2) for empty buffer with 2 channels
+        mock_ni_task.acquire.return_value = np.empty((0, 2))
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()
@@ -1030,7 +1033,8 @@ class TestReadAllAvailable:
         w._connected = True
 
         mock_ni_task = MagicMock()
-        mock_ni_task.acquire.return_value = np.array([[1, 2], [3, 4]])
+        # AITask.acquire() returns (n_samples, n_channels) — 2 samples, 2 channels
+        mock_ni_task.acquire.return_value = np.array([[1, 3], [2, 4]])
         w._task_in_obj_active = mock_ni_task
 
         # No trigger should be involved
@@ -1039,15 +1043,15 @@ class TestReadAllAvailable:
         assert result.shape == (2, 2)
 
     def test_acquire_single_channel(self, DAQHandler, wrapper_module):
-        """10.4 read_all_available() reshapes single-channel data."""
+        """10.4 read_all_available() passes through single-channel (n_samples, 1)."""
         w = DAQHandler()
         w.configure(task_in="InputTask")
         w._connected = True
         w._n_channels_in = 1
 
         mock_ni_task = MagicMock()
-        # acquire returns (1, n_samples) for single channel
-        mock_ni_task.acquire.return_value = np.array([[1, 2, 3, 4]])
+        # AITask.acquire() returns (n_samples, 1) for single channel
+        mock_ni_task.acquire.return_value = np.array([[1], [2], [3], [4]])
         w._task_in_obj_active = mock_ni_task
 
         result = w.read_all_available()

@@ -735,9 +735,8 @@ class DAQHandler:
                 raise ValueError(
                     "No active input task. Call connect() first."
                 )
-            # acquire() returns (n_channels, n_samples)
             raw = self._task_in_obj_active.acquire(n_samples=n_samples)
-            return raw.T
+            return raw
 
     def read(self) -> np.ndarray:
         """Read a single sample from each input channel.
