@@ -16,6 +16,7 @@ Requirements
 from __future__ import annotations
 
 import time
+from concurrent.futures import Future
 
 import numpy as np
 import pytest
@@ -456,6 +457,110 @@ class TestHandlerBlockingRead:
 
             assert isinstance(data, np.ndarray)
             assert data.shape == (500, 2), f"Expected (500, 2), got {data.shape}"
+
+        finally:
+            handler.disconnect()
+
+
+# ===========================================================================
+# Task Group 2: DAQHandler.acquire(blocking=False) simulated tests
+# ===========================================================================
+
+
+class TestHandlerNonBlockingAcquire:
+    """Validate the non-blocking Future path of DAQHandler.acquire()."""
+
+    def test_acquire_returns_future(self, sim_device_index: int) -> None:
+        """acquire(blocking=False) returns a Future whose result is correct.
+
+        Verifies:
+        - Return value is a concurrent.futures.Future instance
+        - future.result(timeout=15) returns a numpy array
+        - Array shape is (500, 1) — (n_samples, n_channels)
+        """
+        pytest.importorskip("pyTrigger", reason="pyTrigger not installed")
+
+        from nidaqwrapper import AITask, DAQHandler
+
+        n_samples = 500
+        task = AITask("test_future_result", sample_rate=10000)
+        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=task)
+            handler.connect()
+
+            # abs trigger at level 0.0 fires immediately on simulated near-zero noise
+            handler.set_trigger(
+                n_samples=n_samples,
+                trigger_channel=0,
+                trigger_level=0.0,
+                trigger_type="abs",
+            )
+
+            future = handler.acquire(blocking=False)
+
+            # Must return a Future (not block until data is ready)
+            assert isinstance(future, Future), (
+                f"Expected concurrent.futures.Future, got {type(future)}"
+            )
+
+            # Block here to get the result; generous timeout for simulated device
+            data = future.result(timeout=15)
+
+            assert isinstance(data, np.ndarray)
+            assert data.shape == (n_samples, 1), (
+                f"Expected ({n_samples}, 1), got {data.shape}"
+            )
+
+        finally:
+            handler.disconnect()
+
+    def test_acquire_nonblocking_does_not_block(
+        self, sim_device_index: int
+    ) -> None:
+        """acquire(blocking=False) returns in well under 1 second.
+
+        Verifies the non-blocking contract: the call returns before
+        acquisition is complete, not after.
+        """
+        pytest.importorskip("pyTrigger", reason="pyTrigger not installed")
+
+        from nidaqwrapper import AITask, DAQHandler
+
+        n_samples = 200
+        task = AITask("test_nonblocking_timing", sample_rate=10000)
+        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+
+        handler = DAQHandler()
+        try:
+            handler.configure(task_in=task)
+            handler.connect()
+
+            handler.set_trigger(
+                n_samples=n_samples,
+                trigger_channel=0,
+                trigger_level=0.0,
+                trigger_type="abs",
+            )
+
+            t_start = time.monotonic()
+            future = handler.acquire(blocking=False)
+            t_elapsed = time.monotonic() - t_start
+
+            # The call must return in well under 1 second
+            assert t_elapsed < 1.0, (
+                f"acquire(blocking=False) took {t_elapsed:.3f}s — should return immediately"
+            )
+
+            # Must return a Future, not data
+            assert isinstance(future, Future), (
+                f"Expected concurrent.futures.Future, got {type(future)}"
+            )
+
+            # Wait for the background thread to finish before disconnect
+            future.result(timeout=15)
 
         finally:
             handler.disconnect()

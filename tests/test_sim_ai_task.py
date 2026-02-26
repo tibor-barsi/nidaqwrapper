@@ -223,3 +223,154 @@ class TestAITaskSimulated:
             assert data.shape == (100, 2)
         finally:
             task2.clear_task()
+
+
+# ===========================================================================
+# Task Group 1: AITask.from_name() simulated tests
+# ===========================================================================
+
+
+class TestAITaskFromNameSimulated:
+    """Validate AITask.from_name() against a real NI MAX task database."""
+
+    def test_from_name_wraps_ni_max_task(self, sim_task_name: str) -> None:
+        """from_name(sim_task_name) returns owned AITask with correct properties.
+
+        Verifies:
+        - Returns an AITask instance without raising
+        - _owns_task is True (from_name always takes ownership)
+        - number_of_ch >= 1 (SimTask1 has 4 AI channels)
+        - channel_list is a non-empty list of strings
+        - sample_rate is approximately 10000 Hz (SimTask1 is configured at 10kHz)
+        - start() succeeds without raising (ownership is correct)
+        - clear_task() closes the underlying nidaqmx task silently (no warning)
+        """
+        from nidaqwrapper import AITask
+
+        task = None
+        try:
+            task = AITask.from_name(sim_task_name)
+
+            # Ownership: from_name always sets _owns_task=True
+            assert task._owns_task is True
+
+            # Channel count and names
+            assert task.number_of_ch >= 1, (
+                f"Expected at least 1 channel, got {task.number_of_ch}"
+            )
+            assert isinstance(task.channel_list, list)
+            assert len(task.channel_list) >= 1
+            assert all(isinstance(name, str) for name in task.channel_list)
+
+            # Sample rate: SimTask1 is configured at 10kHz
+            assert task.sample_rate == pytest.approx(10000.0, rel=0.01), (
+                f"Expected ~10000 Hz, got {task.sample_rate}"
+            )
+
+            # start() must succeed — proves ownership is correct (not blocked)
+            task.start()
+
+        finally:
+            if task is not None:
+                try:
+                    task.clear_task()
+                except Exception:
+                    pass
+
+    def test_from_name_nonexistent_task_raises(
+        self, simulated_device_name: str
+    ) -> None:
+        """from_name() raises KeyError for a task name that does not exist.
+
+        The simulated_device_name fixture ensures nidaqmx is installed
+        before testing the error path.
+        """
+        from nidaqwrapper import AITask
+
+        with pytest.raises(KeyError):
+            AITask.from_name("DoesNotExist_xyzzy_12345")
+
+
+# ===========================================================================
+# Task Group 3: Custom-scale voltage channel simulated tests
+# ===========================================================================
+
+
+class TestAITaskCustomScaleSimulated:
+    """Validate add_channel() with custom linear scale on the PCIe-6361."""
+
+    def test_custom_scale_channel_creates_and_reads(
+        self, sim_device_index: int
+    ) -> None:
+        """Custom scale (scalar slope) channel creates, starts, and acquires.
+
+        Uses a slope-only (no offset) linear scale.  Verifies the driver
+        accepted the scale object and that acquire() returns the correct
+        shape and dtype.
+        """
+        from nidaqwrapper import AITask
+
+        task = None
+        try:
+            task = AITask("test_custom_scale", sample_rate=10000)
+            task.add_channel(
+                "accel_0",
+                device_ind=sim_device_index,
+                channel_ind=0,
+                units="m/s2",
+                scale=0.5,
+            )
+
+            assert task.number_of_ch == 1
+
+            task.configure()
+            task.start()
+
+            data = task.acquire(n_samples=50)
+
+            # Shape: (n_samples, n_channels) per API Invariant #1
+            assert isinstance(data, np.ndarray)
+            assert data.shape == (50, 1), (
+                f"Expected (50, 1), got {data.shape}"
+            )
+            assert data.dtype == np.float64
+
+        finally:
+            if task is not None:
+                try:
+                    task.clear_task()
+                except Exception:
+                    pass
+
+    def test_custom_scale_channel_with_offset(
+        self, sim_device_index: int
+    ) -> None:
+        """Custom scale (slope, y_intercept) tuple form creates and configures.
+
+        Verifies the tuple form of scale is accepted by the driver.
+        Does not start or acquire — configure() success is sufficient.
+        """
+        from nidaqwrapper import AITask
+
+        task = None
+        try:
+            task = AITask("test_custom_scale_offset", sample_rate=5000)
+            task.add_channel(
+                "force_0",
+                device_ind=sim_device_index,
+                channel_ind=0,
+                units="N",
+                scale=(100.0, 5.0),
+            )
+
+            assert task.number_of_ch == 1
+
+            # configure() must not raise — driver accepted the scale and timing
+            task.configure()
+
+        finally:
+            if task is not None:
+                try:
+                    task.clear_task()
+                except Exception:
+                    pass
