@@ -39,7 +39,6 @@ from __future__ import annotations
 import pathlib
 import warnings
 from datetime import datetime
-from typing import Any
 
 import numpy as np
 
@@ -111,11 +110,6 @@ class AOTask(BaseTask):
                 f"Task '{task_name}' already exists in NI MAX. "
                 "Choose a different name."
             )
-
-        # Track original add_channel() parameters for TOML serialisation.
-        # The nidaqmx task stores resolved constants; we need the original
-        # values (min_val, max_val) to write a human-readable config file.
-        self._channel_configs: list[dict[str, Any]] = []
 
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
@@ -196,16 +190,6 @@ class AOTask(BaseTask):
             max_val=max_val,
         )
 
-        # Record original parameters after a successful nidaqmx call so that
-        # save_config() can serialise human-readable values.
-        self._channel_configs.append({
-            "name": channel_name,
-            "device_ind": device_ind,
-            "channel_ind": channel_ind,
-            "min_val": min_val,
-            "max_val": max_val,
-        })
-
     # -- Task lifecycle -------------------------------------------------------
 
     def configure(self) -> None:
@@ -280,7 +264,9 @@ class AOTask(BaseTask):
     def save_config(self, path: str | pathlib.Path) -> None:
         """Serialise the task configuration to a TOML file.
 
-        Writes a human-readable TOML file that can be loaded back with
+        Reads channel information directly from ``self.task.ao_channels``
+        (the nidaqmx Task is the single source of truth).  Writes a
+        human-readable TOML file that can be loaded back with
         :meth:`from_config` to recreate the same task on any compatible
         hardware.  Device names are replaced by short aliases in
         ``[devices]`` so that changing chassis enumeration only requires
@@ -294,21 +280,22 @@ class AOTask(BaseTask):
         Notes
         -----
         TOML is generated with simple string formatting — no third-party
-        library is required for writing.  ``min_val`` and ``max_val`` are
-        always written (they always have values: the defaults are -10.0
-        and 10.0 respectively).
+        library is required for writing.  ``min_val`` / ``max_val`` are
+        always written (read from ``channel.ao_min`` / ``channel.ao_max``).
 
         Examples
         --------
         >>> task.save_config("/tmp/signal_gen.toml")
         """
-        # Build alias → device_name map for every unique device used.
-        # Aliases are assigned in the order channels were added: dev0, dev1 …
-        device_alias: dict[int, str] = {}
-        for cfg in self._channel_configs:
-            ind = cfg["device_ind"]
-            if ind not in device_alias:
-                device_alias[ind] = f"dev{len(device_alias)}"
+        # Build device alias map from unique device names in channel order
+        device_names_seen: list[str] = []
+        for ch in self.task.ao_channels:
+            dev = ch.physical_channel.name.rsplit("/", 1)[0]
+            if dev not in device_names_seen:
+                device_names_seen.append(dev)
+        device_to_alias: dict[str, str] = {
+            name: f"dev{i}" for i, name in enumerate(device_names_seen)
+        }
 
         lines: list[str] = []
 
@@ -327,21 +314,29 @@ class AOTask(BaseTask):
 
         # [devices] section
         lines.append("[devices]")
-        for ind, alias in device_alias.items():
-            device_name = self.device_list[ind]
-            product_type = self.device_product_type[ind]
-            lines.append(f'{alias} = "{device_name}"  # {product_type}')
+        for dev_name, alias in device_to_alias.items():
+            try:
+                dev_idx = self.device_list.index(dev_name)
+                product_type = self.device_product_type[dev_idx]
+                lines.append(f'{alias} = "{dev_name}"  # {product_type}')
+            except (ValueError, IndexError):
+                lines.append(f'{alias} = "{dev_name}"')
         lines.append("")
 
-        # [[channels]] entries
-        for cfg in self._channel_configs:
-            alias = device_alias[cfg["device_ind"]]
+        # [[channels]] entries — read all info from the live task channels
+        for ch in self.task.ao_channels:
+            phys = ch.physical_channel.name
+            dev_name = phys.rsplit("/", 1)[0]
+            ch_spec = phys.rsplit("/", 1)[1]
+            channel_ind = int(ch_spec.lstrip("ao"))
+            alias = device_to_alias[dev_name]
+
             lines.append("[[channels]]")
-            lines.append(f'name = "{cfg["name"]}"')
+            lines.append(f'name = "{ch.name}"')
             lines.append(f'device = "{alias}"')
-            lines.append(f'channel = {cfg["channel_ind"]}')
-            lines.append(f"min_val = {cfg['min_val']}")
-            lines.append(f"max_val = {cfg['max_val']}")
+            lines.append(f"channel = {channel_ind}")
+            lines.append(f"min_val = {ch.ao_min}")
+            lines.append(f"max_val = {ch.ao_max}")
             lines.append("")
 
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
@@ -441,7 +436,9 @@ class AOTask(BaseTask):
         return task
 
     @classmethod
-    def from_task(cls, task: nidaqmx.task.Task) -> AOTask:
+    def from_task(
+        cls, task: nidaqmx.task.Task, take_ownership: bool = False
+    ) -> AOTask:
         """Wrap a pre-created nidaqmx.Task object.
 
         This provides an escape hatch for advanced users who need to configure
@@ -453,13 +450,18 @@ class AOTask(BaseTask):
         task : nidaqmx.task.Task
             An existing nidaqmx Task object with AO channels configured.
             Timing configuration and task state are preserved.
+        take_ownership : bool, optional
+            If ``True``, the wrapper takes ownership of the task and all
+            mutating methods (:meth:`add_channel`, :meth:`configure`,
+            :meth:`start`, :meth:`clear_task`) are permitted.  The task
+            will be closed when :meth:`clear_task` is called.  Default is
+            ``False`` (original behaviour: task is not owned, mutating
+            methods raise ``RuntimeError``).
 
         Returns
         -------
         AOTask
             A wrapper instance that delegates to the provided task.
-            The wrapper does NOT own the task — cleanup is the caller's
-            responsibility.
 
         Raises
         ------
@@ -472,7 +474,7 @@ class AOTask(BaseTask):
 
         Notes
         -----
-        When wrapping an external task:
+        When wrapping an external task with ``take_ownership=False``:
 
         - :meth:`add_channel` is blocked and raises ``RuntimeError``
         - :meth:`configure` and :meth:`start` are blocked and raise ``RuntimeError``
@@ -517,10 +519,7 @@ class AOTask(BaseTask):
         instance.device_list = [dev.name for dev in system.devices]
         instance.device_product_type = [dev.product_type for dev in system.devices]
 
-        # Empty channel configs — user configured channels externally
-        instance._channel_configs = []
-
-        # Mark as external task (not owned by this wrapper)
-        instance._owns_task = False
+        # Set ownership: True transfers full control, False preserves external ownership
+        instance._owns_task = take_ownership
 
         return instance

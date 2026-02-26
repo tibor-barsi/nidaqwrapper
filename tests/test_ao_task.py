@@ -31,6 +31,11 @@ def _make_mock_ni_task(samp_clk_rate: float = 10000) -> MagicMock:
     The mock records all add_ao_voltage_chan() calls and maintains a channel
     list so that duplicate detection (via task.channel_names iteration) works
     correctly in the implementation under test.
+
+    Each channel object is populated with the attributes that the new
+    save_config() reads directly from self.task.ao_channels:
+    - ao_min, ao_max (the expected output voltage range)
+    - physical_channel.name (for device/channel parsing)
     """
     task = MagicMock()
     _channel_names: list[str] = []
@@ -44,6 +49,9 @@ def _make_mock_ni_task(samp_clk_rate: float = 10000) -> MagicMock:
         ch.name = name
         ch.physical_channel = MagicMock()
         ch.physical_channel.name = phys
+        # Populate AO channel attributes for save_config()
+        ch.ao_min = kwargs.get("min_val", -10.0)
+        ch.ao_max = kwargs.get("max_val", 10.0)
         _channel_objects.append(ch)
 
     task.ao_channels.add_ao_voltage_chan.side_effect = _ao_handler
@@ -51,10 +59,14 @@ def _make_mock_ni_task(samp_clk_rate: float = 10000) -> MagicMock:
     # channel_names: same list object, stays in sync as channels are added
     task.channel_names = _channel_names
 
-    # ao_channels iteration (for physical channel duplicate detection)
+    # ao_channels iteration (for physical channel duplicate detection and save_config)
     task.ao_channels.__iter__ = MagicMock(
         side_effect=lambda: iter(_channel_objects)
     )
+
+    # Expose the internal channel objects list so tests can set attributes
+    # after add_channel()
+    task._channel_objects = _channel_objects
 
     # Timing (for start() tests)
     task._timing.samp_clk_rate = samp_clk_rate
@@ -1608,6 +1620,131 @@ class TestFromTask:
             task = AOTask.from_task(external)
 
         assert task.number_of_ch == 3
+
+
+# ===========================================================================
+# Task Group: from_task(take_ownership=False) — AOTask ownership transfer
+# ===========================================================================
+
+
+class TestFromTaskTakeOwnership:
+    """from_task(take_ownership=True) grants mutating method access."""
+
+    def _make_external_task(self, mock_system, mock_constants) -> MagicMock:
+        """Create a minimal external AOTask mock with one AO channel."""
+        ext = MagicMock()
+        ext.name = "external_task"
+        ext.timing.samp_clk_rate = 10000
+        ext.timing.samp_quant_samp_per_chan = 50000
+        ext.timing.samp_quant_samp_mode = mock_constants.AcquisitionType.CONTINUOUS
+        ext.is_task_done.return_value = True
+        mock_ch = MagicMock()
+        mock_ch.name = "ao_0"
+        mock_ch.physical_channel.name = "cDAQ1Mod1/ao0"
+        ext.ao_channels = [mock_ch]
+        ext.channel_names = ["ao_0"]
+        return ext
+
+    def test_default_not_owned(self, mock_system, mock_constants):
+        """from_task() without take_ownership sets _owns_task=False."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext)
+
+        assert task._owns_task is False
+
+    def test_take_ownership_sets_owns_task(self, mock_system, mock_constants):
+        """from_task(take_ownership=True) sets _owns_task=True."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext, take_ownership=True)
+
+        assert task._owns_task is True
+
+    def test_add_channel_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).add_channel() does not raise."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+        # Need a MagicMock ao_channels so add_channel can detect duplicates
+        ao_channels_mock = MagicMock()
+        ao_channels_mock.__iter__ = MagicMock(return_value=iter([]))
+        ao_channels_mock.__len__ = MagicMock(return_value=1)
+        ext.ao_channels = ao_channels_mock
+        ext.channel_names = []
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext, take_ownership=True)
+            # Should not raise RuntimeError
+            task.add_channel(
+                "ao_new", device_ind=0, channel_ind=1,
+                min_val=-5.0, max_val=5.0,
+            )
+
+    def test_configure_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).configure() does not raise."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+        ext.timing.samp_clk_rate = 10000  # Matches sample_rate from task mock
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext, take_ownership=True)
+            # configure() calls _check_start_preconditions which checks _owns_task
+            task.configure()
+
+    def test_clear_task_closes_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).clear_task() closes the task."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext, take_ownership=True)
+            task.clear_task()
+
+        ext.close.assert_called_once()
+
+    def test_add_channel_blocked_when_not_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=False).add_channel() raises RuntimeError."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_system, mock_constants)
+
+        with (
+            patch("nidaqwrapper.ao_task.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.ao_task.constants", mock_constants),
+        ):
+            from nidaqwrapper.ao_task import AOTask
+            task = AOTask.from_task(ext, take_ownership=False)
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel("ao_new", device_ind=0, channel_ind=1)
 
 
 # ===========================================================================
