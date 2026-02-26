@@ -560,3 +560,68 @@ class TestSystemInfo:
 
             with pytest.raises(RuntimeError, match="NI-DAQmx drivers"):
                 system_info()
+
+
+class TestUNITSReverse:
+    """Tests for the UNITS_REVERSE dictionary."""
+
+    def test_units_reverse_is_dict(self):
+        """UNITS_REVERSE is a dict."""
+        from nidaqwrapper.utils import UNITS_REVERSE
+
+        assert isinstance(UNITS_REVERSE, dict)
+
+    def test_units_reverse_maps_constants_to_strings(self):
+        """For each (k, v) in UNITS, UNITS_REVERSE[v] is a string key in UNITS."""
+        from nidaqwrapper.utils import UNITS, UNITS_REVERSE
+
+        for key, val in UNITS.items():
+            # The reverse mapping must return some string that is a key in UNITS
+            reverse_key = UNITS_REVERSE.get(val)
+            assert isinstance(reverse_key, str), (
+                f"UNITS_REVERSE[{val!r}] expected str, got {type(reverse_key)}"
+            )
+            assert reverse_key in UNITS, (
+                f"UNITS_REVERSE[{val!r}] = {reverse_key!r} is not a valid UNITS key"
+            )
+
+    def test_units_reverse_round_trips(self):
+        """UNITS[UNITS_REVERSE[v]] == v for all unique values in UNITS."""
+        from nidaqwrapper.utils import UNITS, UNITS_REVERSE
+
+        # Find values that appear only once in UNITS (unambiguous round-trip)
+        from collections import Counter
+        value_counts = Counter(UNITS.values())
+        unique_values = {v for v, count in value_counts.items() if count == 1}
+
+        for key, val in UNITS.items():
+            if val in unique_values:
+                assert UNITS[UNITS_REVERSE[val]] == val, (
+                    f"Round-trip failed: UNITS[UNITS_REVERSE[{val!r}]] != {val!r}"
+                )
+
+    def test_units_reverse_collision_mV_g(self):
+        """UNITS_REVERSE[MILLIVOLTS_PER_G] returns a valid string key from UNITS.
+
+        Both 'mV/g' and 'mV/m/s**2' map to MILLIVOLTS_PER_G in UNITS.
+        The reverse must return one of the two valid keys.
+        """
+        from nidaqmx import constants
+
+        from nidaqwrapper.utils import UNITS, UNITS_REVERSE
+
+        millivolts_per_g = constants.AccelSensitivityUnits.MILLIVOLTS_PER_G
+        result = UNITS_REVERSE.get(millivolts_per_g)
+        assert result in ("mV/g", "mV/m/s**2"), (
+            f"Expected 'mV/g' or 'mV/m/s**2', got {result!r}"
+        )
+        # The returned key must exist in UNITS
+        assert result in UNITS
+
+    def test_units_reverse_get_returns_fallback(self):
+        """UNITS_REVERSE.get(unknown_constant, 'fallback') returns 'fallback'."""
+        from nidaqwrapper.utils import UNITS_REVERSE
+
+        sentinel = object()  # an unknown key not in UNITS_REVERSE
+        result = UNITS_REVERSE.get(sentinel, "fallback")
+        assert result == "fallback"

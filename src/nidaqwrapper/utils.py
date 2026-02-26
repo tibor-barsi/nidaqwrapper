@@ -55,6 +55,21 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# UNITS_REVERSE — nidaqmx constant → unit string (inverse of UNITS)
+# ---------------------------------------------------------------------------
+
+if _NIDAQMX_AVAILABLE:
+    # Built by dict comprehension — keeps the last key for any constant that
+    # appears multiple times.  The only collision is MILLIVOLTS_PER_G, which
+    # is shared by both 'mV/g' and 'mV/m/s**2' (nidaqmx 1.4.1 compat note in
+    # module docstring).  The comprehension retains 'mV/m/s**2' (the later key).
+    # from_config() accepts both strings, so round-trip integrity is preserved.
+    UNITS_REVERSE: dict[Any, str] = {v: k for k, v in UNITS.items()}
+else:
+    UNITS_REVERSE: dict[Any, str] = {}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
