@@ -137,9 +137,9 @@ class TestAITaskConfigRoundTrip:
                 # Acquire data
                 data = ai_task_loaded.acquire(n_samples=50)
 
-                # Verify data shape
-                assert data.shape[0] == 2, "Should have 2 channels"
-                assert data.shape[1] == 50, "Should have 50 samples"
+                # Verify data shape: (n_samples, n_channels)
+                assert data.shape[0] == 50, "Should have 50 samples"
+                assert data.shape[1] == 2, "Should have 2 channels"
             finally:
                 ai_task_loaded.clear_task()
         finally:

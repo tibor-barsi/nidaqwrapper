@@ -70,10 +70,10 @@ class TestAITaskSimulated:
             # Acquire exactly 100 samples (blocking call)
             data = task.acquire(n_samples=100)
 
-            # Verify shape: (n_channels, n_samples)
+            # Verify shape: (n_samples, n_channels)
             assert isinstance(data, np.ndarray)
             assert data.dtype == np.float64
-            assert data.shape == (2, 100), f"Expected (2, 100), got {data.shape}"
+            assert data.shape == (100, 2), f"Expected (100, 2), got {data.shape}"
 
             # Verify data is non-zero (simulated devices generate noise)
             # At least some samples should be non-zero
@@ -103,9 +103,9 @@ class TestAITaskSimulated:
             # Should return approximately 1000 samples (10000 Hz * 0.1s)
             # Allow generous tolerance for simulated device timing
             assert isinstance(data, np.ndarray)
-            assert data.shape[0] == 1, f"Expected 1 channel, got {data.shape[0]}"
-            assert 500 <= data.shape[1] <= 2000, (
-                f"Expected ~1000 samples (500-2000), got {data.shape[1]}"
+            assert data.shape[1] == 1, f"Expected 1 channel, got {data.shape[1]}"
+            assert 500 <= data.shape[0] <= 2000, (
+                f"Expected ~1000 samples (500-2000), got {data.shape[0]}"
             )
         finally:
             task.clear_task()
@@ -134,7 +134,7 @@ class TestAITaskSimulated:
             # Verify acquire works
             time.sleep(0.1)
             data = wrapped.acquire(n_samples=100)
-            assert data.shape == (2, 100), f"Expected (2, 100), got {data.shape}"
+            assert data.shape == (100, 2), f"Expected (100, 2), got {data.shape}"
 
             # Clear wrapper — should NOT close the raw task
             wrapped.clear_task()
@@ -166,7 +166,7 @@ class TestAITaskSimulated:
             task.start()
             time.sleep(0.1)
             data = task.acquire(n_samples=100)
-            assert data.shape == (1, 100)
+            assert data.shape == (100, 1)
 
         # After exit, task should be None
         assert task.task is None
@@ -220,6 +220,6 @@ class TestAITaskSimulated:
             task2.start()
             time.sleep(0.1)
             data = task2.acquire(n_samples=100)
-            assert data.shape == (2, 100)
+            assert data.shape == (100, 2)
         finally:
             task2.clear_task()

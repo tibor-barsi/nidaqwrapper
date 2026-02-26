@@ -87,9 +87,9 @@ class TestRawTaskPassthrough:
             # Read through wrapper
             data = wrapper.acquire(n_samples=50)
 
-            # Verify data was returned
-            assert data.shape[0] == 1, "Should have 1 channel"
-            assert data.shape[1] == 50, "Should have 50 samples"
+            # Verify data was returned: (n_samples, n_channels)
+            assert data.shape[0] == 50, "Should have 50 samples"
+            assert data.shape[1] == 1, "Should have 1 channel"
 
             # Stop task
             raw_task.stop()
