@@ -398,27 +398,6 @@ class TestDITaskAddChannel:
             with pytest.raises(ValueError, match="Dev1/port0/line0"):
                 di.add_channel("ch2", lines="Dev1/port0/line0")
 
-    def test_channel_configs_recorded(self, mock_system, mock_constants):
-        """_channel_configs list is updated after add_channel() for TOML serialization."""
-        ctx, di, _ = _build_di(mock_system, mock_constants)
-        with ctx:
-            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
-
-        assert hasattr(di, "_channel_configs")
-        assert len(di._channel_configs) == 1
-        assert di._channel_configs[0]["name"] == "btn_group"
-        assert di._channel_configs[0]["lines"] == "Dev1/port0/line0:3"
-
-    def test_multiple_channels_all_recorded(self, mock_system, mock_constants):
-        """All add_channel() calls are recorded in _channel_configs."""
-        ctx, di, _ = _build_di(mock_system, mock_constants)
-        with ctx:
-            di.add_channel("btn_group", lines="Dev1/port0/line0:3")
-            di.add_channel("sensors", lines="Dev1/port1/line0:7")
-
-        assert len(di._channel_configs) == 2
-
-
 class TestDITaskConfigure:
     """configure() sets up clocked timing (no-op in on_demand mode)."""
 
@@ -1621,27 +1600,6 @@ class TestDOTaskAddChannel:
             with pytest.raises(ValueError, match="Dev1/port1/line0"):
                 do.add_channel("ch2", lines="Dev1/port1/line0")
 
-    def test_channel_configs_recorded(self, mock_system, mock_constants):
-        """_channel_configs list is updated after add_channel() for TOML serialization."""
-        ctx, do, _ = _build_do(mock_system, mock_constants)
-        with ctx:
-            do.add_channel("leds", lines="Dev1/port1/line0:3")
-
-        assert hasattr(do, "_channel_configs")
-        assert len(do._channel_configs) == 1
-        assert do._channel_configs[0]["name"] == "leds"
-        assert do._channel_configs[0]["lines"] == "Dev1/port1/line0:3"
-
-    def test_multiple_channels_all_recorded(self, mock_system, mock_constants):
-        """All add_channel() calls are recorded in _channel_configs."""
-        ctx, do, _ = _build_do(mock_system, mock_constants)
-        with ctx:
-            do.add_channel("leds", lines="Dev1/port1/line0:3")
-            do.add_channel("relays", lines="Dev1/port2/line0:7")
-
-        assert len(do._channel_configs) == 2
-
-
 class TestDOTaskConfigure:
     """configure() sets up clocked timing (no-op in on_demand mode)."""
 
@@ -2635,6 +2593,218 @@ class TestDOTaskFromTask:
 
         assert do.mode == "on_demand"
         assert do.sample_rate is None
+
+
+# ===========================================================================
+# Task Group: from_task(take_ownership=False) — DITask ownership transfer
+# ===========================================================================
+
+
+class TestDITaskFromTaskTakeOwnership:
+    """from_task(take_ownership=True) grants mutating method access on DITask."""
+
+    def _make_external_task(self, mock_constants) -> MagicMock:
+        """Create a minimal external DITask mock with one DI channel."""
+        ext = MagicMock()
+        ext.name = "external_di"
+        ext.timing.samp_clk_rate = 1000
+        ext.is_task_done.return_value = True
+        mock_ch = MagicMock()
+        mock_ch.name = "ch0"
+        mock_ch.physical_channel.name = "Dev1/port0/line0"
+        ext.di_channels = [mock_ch]
+        ext.channel_names = ["ch0"]
+        return ext
+
+    def test_default_not_owned(self, mock_system, mock_constants):
+        """from_task() without take_ownership sets _owns_task=False."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_task(ext)
+
+        assert task._owns_task is False
+
+    def test_take_ownership_sets_owns_task(self, mock_system, mock_constants):
+        """from_task(take_ownership=True) sets _owns_task=True."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_task(ext, take_ownership=True)
+
+        assert task._owns_task is True
+
+    def test_add_channel_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).add_channel() does not raise."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+        # Use a MagicMock for di_channels so add_channel can detect duplicates
+        di_channels_mock = MagicMock()
+        di_channels_mock.__iter__ = MagicMock(return_value=iter([]))
+        di_channels_mock.__len__ = MagicMock(return_value=1)
+        ext.di_channels = di_channels_mock
+        ext.channel_names = []
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch("nidaqwrapper.digital._expand_port_to_line_range",
+                  side_effect=lambda lines: lines),
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_task(ext, take_ownership=True)
+            # Should not raise RuntimeError
+            task.add_channel("new_ch", lines="Dev1/port0/line1")
+
+    def test_clear_task_closes_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).clear_task() closes the task."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_task(ext, take_ownership=True)
+            task.clear_task()
+
+        ext.close.assert_called_once()
+
+    def test_add_channel_blocked_when_not_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=False).add_channel() raises RuntimeError."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DITask
+            task = DITask.from_task(ext, take_ownership=False)
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel("new_ch", lines="Dev1/port0/line1")
+
+
+# ===========================================================================
+# Task Group: from_task(take_ownership=False) — DOTask ownership transfer
+# ===========================================================================
+
+
+class TestDOTaskFromTaskTakeOwnership:
+    """from_task(take_ownership=True) grants mutating method access on DOTask."""
+
+    def _make_external_task(self, mock_constants) -> MagicMock:
+        """Create a minimal external DOTask mock with one DO channel."""
+        ext = MagicMock()
+        ext.name = "external_do"
+        ext.timing.samp_clk_rate = 1000
+        ext.is_task_done.return_value = True
+        mock_ch = MagicMock()
+        mock_ch.name = "ch0"
+        mock_ch.physical_channel.name = "Dev1/port1/line0"
+        ext.do_channels = [mock_ch]
+        ext.channel_names = ["ch0"]
+        return ext
+
+    def test_default_not_owned(self, mock_system, mock_constants):
+        """from_task() without take_ownership sets _owns_task=False."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_task(ext)
+
+        assert task._owns_task is False
+
+    def test_take_ownership_sets_owns_task(self, mock_system, mock_constants):
+        """from_task(take_ownership=True) sets _owns_task=True."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_task(ext, take_ownership=True)
+
+        assert task._owns_task is True
+
+    def test_add_channel_allowed_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).add_channel() does not raise."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+        # Use a MagicMock for do_channels so add_channel can detect duplicates
+        do_channels_mock = MagicMock()
+        do_channels_mock.__iter__ = MagicMock(return_value=iter([]))
+        do_channels_mock.__len__ = MagicMock(return_value=1)
+        ext.do_channels = do_channels_mock
+        ext.channel_names = []
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+            patch("nidaqwrapper.digital._expand_port_to_line_range",
+                  side_effect=lambda lines: lines),
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_task(ext, take_ownership=True)
+            # Should not raise RuntimeError
+            task.add_channel("new_ch", lines="Dev1/port1/line1")
+
+    def test_clear_task_closes_when_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=True).clear_task() closes the task."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_task(ext, take_ownership=True)
+            task.clear_task()
+
+        ext.close.assert_called_once()
+
+    def test_add_channel_blocked_when_not_owned(self, mock_system, mock_constants):
+        """from_task(task, take_ownership=False).add_channel() raises RuntimeError."""
+        system = mock_system(task_names=[])
+        ext = self._make_external_task(mock_constants)
+
+        with (
+            patch("nidaqwrapper.digital.nidaqmx.system.System.local",
+                  return_value=system),
+            patch("nidaqwrapper.digital.constants", mock_constants),
+        ):
+            from nidaqwrapper.digital import DOTask
+            task = DOTask.from_task(ext, take_ownership=False)
+            with pytest.raises(RuntimeError, match="Cannot add channels"):
+                task.add_channel("new_ch", lines="Dev1/port1/line1")
 
 
 # ===========================================================================

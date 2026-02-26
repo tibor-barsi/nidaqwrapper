@@ -23,7 +23,6 @@ from __future__ import annotations
 import pathlib
 import warnings
 from datetime import datetime
-from typing import Any
 
 import numpy as np
 
@@ -138,11 +137,6 @@ class DITask(BaseTask):
                 "Choose a unique name."
             )
 
-        # Track original add_channel() parameters for TOML serialisation.
-        # The nidaqmx task stores resolved channel objects; we need the
-        # original human-readable values to write a config file.
-        self._channel_configs: list[dict[str, Any]] = []
-
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
@@ -202,9 +196,6 @@ class DITask(BaseTask):
             name_to_assign_to_lines=channel_name,
             line_grouping=constants.LineGrouping.CHAN_PER_LINE,
         )
-
-        # Record original (pre-expansion) lines for human-readable TOML output
-        self._channel_configs.append({"name": channel_name, "lines": lines})
 
     # -- Task lifecycle -------------------------------------------------------
 
@@ -294,7 +285,9 @@ class DITask(BaseTask):
     def save_config(self, path: str | pathlib.Path) -> None:
         """Serialise the task configuration to a TOML file.
 
-        Writes a human-readable TOML file that can be loaded back with
+        Reads channel information directly from ``self.task.di_channels``
+        (the nidaqmx Task is the single source of truth).  Writes a
+        human-readable TOML file that can be loaded back with
         :meth:`from_config` to recreate the same task on any compatible
         hardware.
 
@@ -308,7 +301,9 @@ class DITask(BaseTask):
         TOML is generated with simple string formatting — no third-party
         library is required for writing. The ``sample_rate`` key is only
         written for clocked-mode tasks; on-demand tasks omit it entirely
-        so that ``from_config`` correctly restores the mode.
+        so that ``from_config`` correctly restores the mode.  The
+        ``lines`` value for each channel is read from
+        ``channel.physical_channel.name``.
         """
         lines: list[str] = []
 
@@ -325,11 +320,11 @@ class DITask(BaseTask):
             lines.append(f"sample_rate = {self.sample_rate}")
         lines.append("")
 
-        # [[channels]] entries — use original (pre-expansion) lines string
-        for cfg in self._channel_configs:
+        # [[channels]] entries — read from live task channels
+        for ch in self.task.di_channels:
             lines.append("[[channels]]")
-            lines.append(f'name = "{cfg["name"]}"')
-            lines.append(f'lines = "{cfg["lines"]}"')
+            lines.append(f'name = "{ch.name}"')
+            lines.append(f'lines = "{ch.physical_channel.name}"')
             lines.append("")
 
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
@@ -382,7 +377,9 @@ class DITask(BaseTask):
         return task
 
     @classmethod
-    def from_task(cls, task: nidaqmx.task.Task) -> DITask:
+    def from_task(
+        cls, task: nidaqmx.task.Task, take_ownership: bool = False
+    ) -> DITask:
         """Wrap an externally-created nidaqmx.Task in a DITask.
 
         This classmethod provides an escape hatch for advanced users who need
@@ -393,12 +390,18 @@ class DITask(BaseTask):
         ----------
         task : nidaqmx.task.Task
             A pre-configured nidaqmx.Task with at least one DI channel.
+        take_ownership : bool, optional
+            If ``True``, the wrapper takes ownership of the task and all
+            mutating methods (:meth:`add_channel`, :meth:`configure`,
+            :meth:`start`, :meth:`clear_task`) are permitted.  The task
+            will be closed when :meth:`clear_task` is called.  Default is
+            ``False`` (original behaviour: task is not owned, mutating
+            methods raise ``RuntimeError``).
 
         Returns
         -------
         DITask
-            A DITask instance wrapping the provided task. The wrapper does NOT
-            take ownership of the task; the caller must close it manually.
+            A DITask instance wrapping the provided task.
 
         Raises
         ------
@@ -411,7 +414,7 @@ class DITask(BaseTask):
 
         Notes
         -----
-        When created via this method:
+        When created via this method with ``take_ownership=False``:
 
         - :meth:`add_channel`, :meth:`configure`, and :meth:`start` will raise RuntimeError
         - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
@@ -464,11 +467,8 @@ class DITask(BaseTask):
         system = nidaqmx.system.System.local()
         instance.device_list = [dev.name for dev in system.devices]
 
-        # Initialize _channel_configs as empty (can't reconstruct original params)
-        instance._channel_configs = []
-
-        # Mark as externally owned
-        instance._owns_task = False
+        # Set ownership: True transfers full control, False preserves external ownership
+        instance._owns_task = take_ownership
 
         return instance
 
@@ -533,9 +533,6 @@ class DOTask(BaseTask):
                 "Choose a unique name."
             )
 
-        # Track original add_channel() parameters for TOML serialisation
-        self._channel_configs: list[dict[str, Any]] = []
-
         # Create the nidaqmx task immediately — it is the single source of truth
         self.task = nidaqmx.task.Task(new_task_name=task_name)
 
@@ -595,9 +592,6 @@ class DOTask(BaseTask):
             name_to_assign_to_lines=channel_name,
             line_grouping=constants.LineGrouping.CHAN_PER_LINE,
         )
-
-        # Record original (pre-expansion) lines for human-readable TOML output
-        self._channel_configs.append({"name": channel_name, "lines": lines})
 
     # -- Task lifecycle -------------------------------------------------------
 
@@ -678,7 +672,9 @@ class DOTask(BaseTask):
     def save_config(self, path: str | pathlib.Path) -> None:
         """Serialise the task configuration to a TOML file.
 
-        Writes a human-readable TOML file that can be loaded back with
+        Reads channel information directly from ``self.task.do_channels``
+        (the nidaqmx Task is the single source of truth).  Writes a
+        human-readable TOML file that can be loaded back with
         :meth:`from_config` to recreate the same task on any compatible
         hardware.
 
@@ -692,7 +688,9 @@ class DOTask(BaseTask):
         TOML is generated with simple string formatting — no third-party
         library is required for writing. The ``sample_rate`` key is only
         written for clocked-mode tasks; on-demand tasks omit it entirely
-        so that ``from_config`` correctly restores the mode.
+        so that ``from_config`` correctly restores the mode.  The
+        ``lines`` value for each channel is read from
+        ``channel.physical_channel.name``.
         """
         lines: list[str] = []
 
@@ -709,11 +707,11 @@ class DOTask(BaseTask):
             lines.append(f"sample_rate = {self.sample_rate}")
         lines.append("")
 
-        # [[channels]] entries — use original (pre-expansion) lines string
-        for cfg in self._channel_configs:
+        # [[channels]] entries — read from live task channels
+        for ch in self.task.do_channels:
             lines.append("[[channels]]")
-            lines.append(f'name = "{cfg["name"]}"')
-            lines.append(f'lines = "{cfg["lines"]}"')
+            lines.append(f'name = "{ch.name}"')
+            lines.append(f'lines = "{ch.physical_channel.name}"')
             lines.append("")
 
         pathlib.Path(path).write_text("\n".join(lines), encoding="utf-8")
@@ -766,7 +764,9 @@ class DOTask(BaseTask):
         return task
 
     @classmethod
-    def from_task(cls, task: nidaqmx.task.Task) -> DOTask:
+    def from_task(
+        cls, task: nidaqmx.task.Task, take_ownership: bool = False
+    ) -> DOTask:
         """Wrap an externally-created nidaqmx.Task in a DOTask.
 
         This classmethod provides an escape hatch for advanced users who need
@@ -777,12 +777,18 @@ class DOTask(BaseTask):
         ----------
         task : nidaqmx.task.Task
             A pre-configured nidaqmx.Task with at least one DO channel.
+        take_ownership : bool, optional
+            If ``True``, the wrapper takes ownership of the task and all
+            mutating methods (:meth:`add_channel`, :meth:`configure`,
+            :meth:`start`, :meth:`clear_task`) are permitted.  The task
+            will be closed when :meth:`clear_task` is called.  Default is
+            ``False`` (original behaviour: task is not owned, mutating
+            methods raise ``RuntimeError``).
 
         Returns
         -------
         DOTask
-            A DOTask instance wrapping the provided task. The wrapper does NOT
-            take ownership of the task; the caller must close it manually.
+            A DOTask instance wrapping the provided task.
 
         Raises
         ------
@@ -795,7 +801,7 @@ class DOTask(BaseTask):
 
         Notes
         -----
-        When created via this method:
+        When created via this method with ``take_ownership=False``:
 
         - :meth:`add_channel`, :meth:`configure`, and :meth:`start` will raise RuntimeError
         - :meth:`clear_task` and :meth:`__exit__` will NOT close the task
@@ -848,10 +854,7 @@ class DOTask(BaseTask):
         system = nidaqmx.system.System.local()
         instance.device_list = [dev.name for dev in system.devices]
 
-        # Initialize _channel_configs as empty
-        instance._channel_configs = []
-
-        # Mark as externally owned
-        instance._owns_task = False
+        # Set ownership: True transfers full control, False preserves external ownership
+        instance._owns_task = take_ownership
 
         return instance
