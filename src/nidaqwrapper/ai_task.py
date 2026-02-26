@@ -375,9 +375,9 @@ class AITask(BaseTask):
         Returns
         -------
         np.ndarray
-            2-D array of shape ``(n_channels, n_samples)``.  For single-
+            2-D array of shape ``(n_samples, n_channels)``.  For single-
             channel tasks nidaqmx returns a 1-D list; this method reshapes
-            it to ``(1, n_samples)`` so callers always receive a consistent
+            it to ``(n_samples, 1)`` so callers always receive a consistent
             shape.
         """
         count = -1 if n_samples is None else n_samples
@@ -385,10 +385,13 @@ class AITask(BaseTask):
         data = np.array(raw)
 
         if data.ndim == 1:
-            # Single-channel: nidaqmx returns a flat list; normalise to 2-D
-            data = data.reshape(1, -1)
+            # Single-channel: nidaqmx returns a flat list → (n_samples, 1)
+            data = data.reshape(-1, 1)
+        else:
+            # Multi-channel: nidaqmx returns (n_channels, n_samples) → transpose
+            data = data.T
 
-        return data
+        return data  # shape: (n_samples, n_channels)
 
     def save(self, clear_task: bool = True) -> None:
         """Save the task to NI MAX.

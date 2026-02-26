@@ -877,7 +877,7 @@ class TestAcquireBase:
     """acquire() reads all available samples from the hardware buffer."""
 
     def test_multi_channel(self, mock_system, mock_constants):
-        """Multi-channel read returns (n_channels, n_samples) numpy array."""
+        """Multi-channel square case (3 channels x 3 samples) returns (3, 3)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -890,11 +890,13 @@ class TestAcquireBase:
         result = task.acquire()
 
         assert isinstance(result, np.ndarray)
+        # Square case: (n_channels, n_samples) == (n_samples, n_channels) == (3, 3)
         assert result.shape == (3, 3)
-        np.testing.assert_array_equal(result[0], [1.0, 2.0, 3.0])
+        # After transpose, columns are channels: result[:, 0] = channel 0's samples
+        np.testing.assert_array_equal(result[:, 0], [1.0, 2.0, 3.0])
 
     def test_single_channel_reshaped(self, mock_system, mock_constants):
-        """Single-channel 1D result is reshaped to (1, n_samples)."""
+        """Single-channel 1D result is reshaped to (n_samples, 1)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             pass
@@ -903,7 +905,7 @@ class TestAcquireBase:
         result = task.acquire()
 
         assert result.ndim == 2
-        assert result.shape == (1, 4)
+        assert result.shape == (4, 1)
 
     def test_empty_buffer(self, mock_system, mock_constants):
         """Empty buffer returns an empty array without raising."""
@@ -926,6 +928,49 @@ class TestAcquireBase:
         task.acquire()
 
         mt.read.assert_called_once_with(number_of_samples_per_channel=-1)
+
+    def test_multi_channel_non_square(self, mock_system, mock_constants):
+        """Multi-channel non-square: 2 channels x 5 samples returns (5, 2)."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+        mt.read.return_value = [
+            [10.0, 20.0, 30.0, 40.0, 50.0],  # channel 0
+            [1.0, 2.0, 3.0, 4.0, 5.0],        # channel 1
+        ]
+
+        result = task.acquire()
+
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (5, 2)
+
+    def test_single_channel_shape(self, mock_system, mock_constants):
+        """Single-channel explicitly returns (n_samples, 1), not (1, n_samples)."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+        mt.read.return_value = [5.0, 6.0, 7.0, 8.0]
+
+        result = task.acquire()
+
+        assert result.shape == (4, 1)
+        assert result.shape[0] == 4   # samples dimension
+        assert result.shape[1] == 1   # channels dimension
+
+    def test_multi_channel_first_column_is_first_channel(self, mock_system, mock_constants):
+        """Data orientation: result[:, 0] contains the first channel's samples."""
+        ctx, task, mt = _build(mock_system, mock_constants)
+        with ctx:
+            pass
+        ch0_data = [10.0, 20.0, 30.0, 40.0, 50.0]
+        ch1_data = [1.0, 2.0, 3.0, 4.0, 5.0]
+        mt.read.return_value = [ch0_data, ch1_data]
+
+        result = task.acquire()
+
+        # result[:, 0] must be channel 0's samples (not sample 0 across channels)
+        np.testing.assert_array_equal(result[:, 0], ch0_data)
+        np.testing.assert_array_equal(result[:, 1], ch1_data)
 
 
 # ===========================================================================
