@@ -292,21 +292,22 @@ class TestHardwareAcquire:
             assert data.ndim == 2, (
                 f"Expected 2-D array, got shape {data.shape}"
             )
-            assert data.shape[0] == 1, (
-                f"Expected 1 channel row, got shape {data.shape}"
+            assert data.shape[1] == 1, (
+                f"Expected 1 channel column, got shape {data.shape}"
             )
-            assert data.shape[1] > 0, (
+            assert data.shape[0] > 0, (
                 "Expected at least one sample, buffer appears empty"
             )
         finally:
             task.clear_task()
 
     def test_acquire_multi_channel(self) -> None:
-        """acquire() on a 2-channel task returns (2, n) ndarray.
+        """acquire() on a 2-channel task returns (n, 2) ndarray.
 
-        Confirms that the channel-major shape is maintained when more than
-        one physical channel is active — nidaqmx returns a list-of-lists for
-        multi-channel tasks, and acquire() must convert that to 2-D.
+        Confirms that the sample-major shape (n_samples, n_channels) is
+        maintained when more than one physical channel is active — nidaqmx
+        returns a list-of-lists for multi-channel tasks, and acquire() must
+        transpose to 2-D (n_samples, n_channels) before returning.
         """
         from nidaqwrapper.ai_task import AITask
 
@@ -338,10 +339,10 @@ class TestHardwareAcquire:
             assert data.ndim == 2, (
                 f"Expected 2-D array, got shape {data.shape}"
             )
-            assert data.shape[0] == 2, (
-                f"Expected 2 channel rows, got shape {data.shape}"
+            assert data.shape[1] == 2, (
+                f"Expected 2 channel columns, got shape {data.shape}"
             )
-            assert data.shape[1] > 0, "Expected at least one sample"
+            assert data.shape[0] > 0, "Expected at least one sample"
         finally:
             task.clear_task()
 

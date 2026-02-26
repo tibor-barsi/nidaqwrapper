@@ -175,8 +175,8 @@ class TestAITaskHardware:
 
             assert isinstance(data, np.ndarray), f"Expected ndarray, got {type(data)}"
             assert data.ndim == 2, f"Expected 2-D array, got shape {data.shape}"
-            assert data.shape[0] == 1, f"Expected 1 channel row, got shape {data.shape}"
-            assert data.shape[1] > 0, "Expected at least one sample"
+            assert data.shape[1] == 1, f"Expected 1 channel column, got shape {data.shape}"
+            assert data.shape[0] > 0, "Expected at least one sample"
         finally:
             task.clear_task()
 
@@ -202,7 +202,7 @@ class TestAITaskHardware:
             data = task.acquire()
 
             expected_samples = int(AI_SAMPLE_RATE * 0.5)
-            actual_samples = data.shape[1]
+            actual_samples = data.shape[0]
             tolerance = 0.20
             assert abs(actual_samples - expected_samples) / expected_samples < tolerance, (
                 f"Sample count {actual_samples} deviates >20% from expected "
@@ -225,7 +225,7 @@ class TestAITaskHardware:
             task.acquire()
             time.sleep(0.1)
             data = task.acquire()
-            assert data.shape[1] > 0
+            assert data.shape[0] > 0
 
         # After exit, task handle is released
         assert task.task is None
@@ -374,7 +374,7 @@ class TestWrapperProgrammatic:
             wrapper.disconnect()
 
     def test_wrapper_acquire(self) -> None:
-        """acquire() returns (n_samples, n_channels) data."""
+        """read_all_available() returns (n_samples, n_channels) data."""
         from nidaqwrapper import DAQHandler, AITask
 
         task = AITask("hw_wrap_raa", sample_rate=AI_SAMPLE_RATE)
@@ -390,11 +390,11 @@ class TestWrapperProgrammatic:
 
             # Priming read
             time.sleep(0.1)
-            wrapper.acquire()
+            wrapper.read_all_available()
 
             # Real read
             time.sleep(0.2)
-            data = wrapper.acquire()
+            data = wrapper.read_all_available()
 
             assert isinstance(data, np.ndarray)
             assert data.ndim == 2
