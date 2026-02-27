@@ -46,14 +46,14 @@ pytestmark = pytest.mark.hardware
 
 # Analog input: cDAQ2Mod4 (NI 9215)
 AI_DEVICE_NAME = "cDAQ2Mod4"
-AI_DEVICE_INDEX = 2
+AI_DEVICE = "cDAQ2Mod4"
 AI_SAMPLE_RATE = 25600  # exact rate supported by NI 9215
 AI_VOLTAGE_MIN = -10.0
 AI_VOLTAGE_MAX = 10.0
 
 # Analog output: cDAQ2Mod3 (NI 9260)
 AO_DEVICE_NAME = "cDAQ2Mod3"
-AO_DEVICE_INDEX = 1
+AO_DEVICE = "cDAQ2Mod3"
 AO_SAMPLE_RATE = 25600  # exact rate supported by NI 9260
 AO_VOLTAGE_RANGE = 4.242  # NI 9260 max output ±4.242641V (use slightly under)
 
@@ -63,7 +63,7 @@ DO_LINES = "Dev1/port1/line0"
 
 # Second AI device for multi-task: Dev1 (PCIe-6320)
 AI2_DEVICE_NAME = "Dev1"
-AI2_DEVICE_INDEX = 3
+AI2_DEVICE = "Dev1"
 
 # NI MAX task — set to None if no saved tasks exist
 NI_MAX_TASK_NAME = "IM3"
@@ -161,7 +161,7 @@ class TestAITaskHardware:
 
         task = AITask("hw_acq_voltage", sample_rate=AI_SAMPLE_RATE)
         try:
-            task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             task.configure()
             task.start()
 
@@ -189,7 +189,7 @@ class TestAITaskHardware:
 
         task = AITask("hw_rate_check", sample_rate=AI_SAMPLE_RATE)
         try:
-            task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             task.configure()
             task.start()
 
@@ -217,7 +217,7 @@ class TestAITaskHardware:
 
         task_name = "hw_ctx_nitask"
         with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task:
-            task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             task.configure()
             task.start()
 
@@ -232,7 +232,7 @@ class TestAITaskHardware:
 
         # Can re-create with same name (proves cleanup)
         with AITask(task_name, sample_rate=AI_SAMPLE_RATE) as task2:
-            task2.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task2.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             task2.configure()
 
 
@@ -254,7 +254,7 @@ class TestAOTaskHardware:
         task = AOTask("hw_ao_gen", sample_rate=AO_SAMPLE_RATE)
         try:
             task.add_channel(
-                "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
+                "ao0", device=AO_DEVICE, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
             task.configure()
@@ -279,7 +279,7 @@ class TestAOTaskHardware:
         task_name = "hw_ctx_ao"
         with AOTask(task_name, sample_rate=AO_SAMPLE_RATE) as task:
             task.add_channel(
-                "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
+                "ao0", device=AO_DEVICE, channel_ind=0,
                 min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
             )
             task.configure()
@@ -344,7 +344,7 @@ class TestWrapperProgrammatic:
         n_samples = 5000
 
         task = AITask("hw_wrap_prog", sample_rate=AI_SAMPLE_RATE)
-        task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+        task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
 
         wrapper = DAQHandler()
         try:
@@ -378,7 +378,7 @@ class TestWrapperProgrammatic:
         from nidaqwrapper import DAQHandler, AITask
 
         task = AITask("hw_wrap_raa", sample_rate=AI_SAMPLE_RATE)
-        task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+        task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
 
         wrapper = DAQHandler()
         try:
@@ -421,7 +421,7 @@ class TestSingleSample:
         from nidaqwrapper import DAQHandler, AITask
 
         task = AITask("hw_ss_read", sample_rate=AI_SAMPLE_RATE)
-        task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+        task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
 
         wrapper = DAQHandler()
         try:
@@ -450,7 +450,7 @@ class TestSingleSample:
 
         task_out = AOTask("hw_ss_write", sample_rate=AO_SAMPLE_RATE)
         task_out.add_channel(
-            "ao0", device_ind=AO_DEVICE_INDEX, channel_ind=0,
+            "ao0", device=AO_DEVICE, channel_ind=0,
             min_val=-AO_VOLTAGE_RANGE, max_val=AO_VOLTAGE_RANGE,
         )
 
@@ -483,7 +483,7 @@ class TestWrapperContextManager:
 
         with DAQHandler() as wrapper:
             task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
-            task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             wrapper.configure(task_in=task)
             wrapper.connect()
 
@@ -491,7 +491,7 @@ class TestWrapperContextManager:
         # Verify resources released: can create a new task with the same name
         new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
-            new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            new_task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             new_task.configure()
         finally:
             new_task.clear_task()
@@ -505,7 +505,7 @@ class TestWrapperContextManager:
         with pytest.raises(RuntimeError, match="deliberate"):
             with DAQHandler() as wrapper:
                 task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
-                task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+                task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
                 wrapper.configure(task_in=task)
                 wrapper.connect()
                 raise RuntimeError("deliberate test exception")
@@ -513,7 +513,7 @@ class TestWrapperContextManager:
         # After exception, resources should still be released
         new_task = AITask(task_name, sample_rate=AI_SAMPLE_RATE)
         try:
-            new_task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            new_task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             new_task.configure()
         finally:
             new_task.clear_task()
@@ -645,7 +645,7 @@ class TestMultiHandlerHardware:
 
         task = AITask("hw_adv_st", sample_rate=AI_SAMPLE_RATE)
         try:
-            task.add_channel("ch0", device_ind=AI_DEVICE_INDEX, channel_ind=0, units="V")
+            task.add_channel("ch0", device=AI_DEVICE, channel_ind=0, units="V")
             task.configure()
 
             adv = MultiHandler()

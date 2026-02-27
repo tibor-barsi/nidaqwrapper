@@ -36,8 +36,8 @@ pytestmark = pytest.mark.hardware
 # Hardware constants — update if the rig changes
 # ---------------------------------------------------------------------------
 
-DEVICE_IND = 2          # cDAQ2Mod4 (NI 9215) in the device list
-DEVICE_NAME = "cDAQ2Mod4"
+DEVICE_NAME = "cDAQ2Mod4"  # NI 9215 in the device list
+DEVICE = "cDAQ2Mod4"
 PRODUCT_SUBSTR = "9215"  # substring that must appear in the product type
 SAMPLE_RATE = 25600      # exact rate supported by NI 9215
 VOLTAGE_MIN = -10.0      # NI 9215 input range lower bound
@@ -121,9 +121,9 @@ class TestHardwareAddChannel:
         """add_channel() stores a voltage channel for cDAQ1Mod4/ai0.
 
         The NI 9215 is a voltage-only module.  This test confirms that a
-        voltage channel added on device_ind=2 (cDAQ1Mod4) / channel_ind=0
+        voltage channel added on device="cDAQ2Mod4" / channel_ind=0
         appears in task.channel_list and task.channels with the correct
-        device_ind and channel_ind values stored.
+        device and channel_ind values stored.
         """
         from nidaqwrapper.ai_task import AITask
 
@@ -131,7 +131,7 @@ class TestHardwareAddChannel:
         try:
             task.add_channel(
                 "voltage_ai0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -154,7 +154,7 @@ class TestHardwareAddChannel:
             for idx in range(3):
                 task.add_channel(
                     f"ch_ai{idx}",
-                    device_ind=DEVICE_IND,
+                    device=DEVICE,
                     channel_ind=idx,
                     units="V",
                 )
@@ -186,7 +186,7 @@ class TestHardwareStart:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -208,7 +208,7 @@ class TestHardwareStart:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -235,7 +235,7 @@ class TestHardwareStart:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -271,7 +271,7 @@ class TestHardwareAcquire:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -315,13 +315,13 @@ class TestHardwareAcquire:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
             task.add_channel(
                 "ch1",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=1,
                 units="V",
             )
@@ -360,7 +360,7 @@ class TestHardwareAcquire:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -408,7 +408,7 @@ class TestHardwareClearTask:
         first = AITask(task_name, sample_rate=SAMPLE_RATE)
         first.add_channel(
             "ch0",
-            device_ind=DEVICE_IND,
+            device=DEVICE,
             channel_ind=0,
             units="V",
         )
@@ -421,7 +421,7 @@ class TestHardwareClearTask:
         try:
             second.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -454,7 +454,7 @@ class TestHardwareSave:
         try:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -496,7 +496,7 @@ class TestHardwareContextManager:
         with AITask(task_name, sample_rate=SAMPLE_RATE) as task:
             task.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
@@ -512,7 +512,7 @@ class TestHardwareContextManager:
         with AITask(task_name, sample_rate=SAMPLE_RATE) as second:
             second.add_channel(
                 "ch0",
-                device_ind=DEVICE_IND,
+                device=DEVICE,
                 channel_ind=0,
                 units="V",
             )
