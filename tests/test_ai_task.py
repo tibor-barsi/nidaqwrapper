@@ -365,7 +365,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -376,7 +376,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=2,
+                "accel_x", device="cDAQ1Mod1", channel_ind=2,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -388,7 +388,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -400,7 +400,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -414,7 +414,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -426,7 +426,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_z", device_ind=0, channel_ind=2,
+                "accel_z", device="cDAQ1Mod1", channel_ind=2,
                 sensitivity=10.204, sensitivity_units="mV/m/s**2", units="m/s**2",
             )
 
@@ -439,7 +439,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=0.0, max_val=50.0,
             )
@@ -453,7 +453,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=-50.0, max_val=50.0,
             )
@@ -467,7 +467,7 @@ class TestAddChannelAccel:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -476,11 +476,11 @@ class TestAddChannelAccel:
         assert "max_val" not in kwargs
 
     def test_second_device(self, mock_system, mock_constants):
-        """Channel on device_ind=1 uses the second device name."""
+        """Channel on a second device uses that device's name."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=1, channel_ind=0,
+                "accel_x", device="cDAQ1Mod2", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -500,7 +500,7 @@ class TestAddChannelForce:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "force_1", device_ind=0, channel_ind=0,
+                "force_1", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=22.5, sensitivity_units="mV/N", units="N",
             )
 
@@ -513,7 +513,7 @@ class TestAddChannelForce:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "force_1", device_ind=0, channel_ind=0,
+                "force_1", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=22.5, sensitivity_units="mV/N", units="N",
             )
 
@@ -535,7 +535,7 @@ class TestAddChannelVoltage:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "voltage_1", device_ind=0, channel_ind=0, units="V",
+                "voltage_1", device="cDAQ1Mod1", channel_ind=0, units="V",
             )
 
         mt.ai_channels.add_ai_voltage_chan.assert_called_once()
@@ -547,7 +547,7 @@ class TestAddChannelVoltage:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "voltage_1", device_ind=0, channel_ind=0, units="V",
+                "voltage_1", device="cDAQ1Mod1", channel_ind=0, units="V",
             )
 
         kwargs = mt.ai_channels.add_ai_voltage_chan.call_args.kwargs
@@ -561,7 +561,7 @@ class TestAddChannelVoltage:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "voltage_1_scale"
                 task.add_channel(
-                    "voltage_1", device_ind=0, channel_ind=0,
+                    "voltage_1", device="cDAQ1Mod1", channel_ind=0,
                     units="V", scale=2500.0,
                 )
 
@@ -581,7 +581,7 @@ class TestAddChannelVoltage:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "voltage_1_scale"
                 task.add_channel(
-                    "voltage_1", device_ind=0, channel_ind=0,
+                    "voltage_1", device="cDAQ1Mod1", channel_ind=0,
                     units="V", scale=(2500.0, -100.0),
                 )
 
@@ -596,7 +596,7 @@ class TestAddChannelVoltage:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "ch_scale"
                 task.add_channel(
-                    "ch", device_ind=0, channel_ind=0,
+                    "ch", device="cDAQ1Mod1", channel_ind=0,
                     units="V", scale=2500.0,
                 )
 
@@ -616,12 +616,12 @@ class TestChannelValidation:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError, match="accel_x"):
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=1,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=1,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 
@@ -630,12 +630,12 @@ class TestChannelValidation:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError, match="already"):
                 task.add_channel(
-                    "accel_y", device_ind=0, channel_ind=0,
+                    "accel_y", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 
@@ -644,23 +644,23 @@ class TestChannelValidation:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.add_channel(
-                "accel_y", device_ind=1, channel_ind=0,
+                "accel_y", device="cDAQ1Mod2", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
         assert mt.ai_channels.add_ai_accel_chan.call_count == 2
 
-    def test_out_of_range_device_raises(self, mock_system, mock_constants):
-        """device_ind beyond available device list raises ValueError."""
+    def test_reject_empty_device_string(self, mock_system, mock_constants):
+        """Empty device string raises ValueError with clear message."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with pytest.raises(ValueError, match="device"):
+            with pytest.raises(ValueError, match="device must be a non-empty string"):
                 task.add_channel(
-                    "accel_x", device_ind=99, channel_ind=0,
+                    "accel_x", device="", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 
@@ -670,7 +670,7 @@ class TestChannelValidation:
         with ctx:
             with pytest.raises((ValueError, TypeError)):
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=0,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/g",
                 )
 
@@ -680,7 +680,7 @@ class TestChannelValidation:
         with ctx:
             with pytest.raises(ValueError, match="units"):
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=0,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/g",
                     units="furlongs_per_fortnight",
                 )
@@ -691,7 +691,7 @@ class TestChannelValidation:
         with ctx:
             with pytest.raises(ValueError, match="sensitivity_units"):
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=0,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/parsec",
                     units="g",
                 )
@@ -702,7 +702,7 @@ class TestChannelValidation:
         with ctx:
             with pytest.raises(ValueError, match="sensitivity"):
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=0,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity_units="mV/g", units="g",
                 )
 
@@ -712,7 +712,7 @@ class TestChannelValidation:
         with ctx:
             with pytest.raises(TypeError, match="scale"):
                 task.add_channel(
-                    "voltage_1", device_ind=0, channel_ind=0,
+                    "voltage_1", device="cDAQ1Mod1", channel_ind=0,
                     units="V", scale="2500",
                 )
 
@@ -723,15 +723,15 @@ class TestChannelValidation:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as mock_scale:
                 mock_scale.return_value.name = "v_scale"
                 task.add_channel(
-                    "accel_x", device_ind=0, channel_ind=0,
+                    "accel_x", device="cDAQ1Mod1", channel_ind=0,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
                 task.add_channel(
-                    "force_1", device_ind=0, channel_ind=1,
+                    "force_1", device="cDAQ1Mod1", channel_ind=1,
                     sensitivity=22.5, sensitivity_units="mV/N", units="N",
                 )
                 task.add_channel(
-                    "voltage_1", device_ind=0, channel_ind=2,
+                    "voltage_1", device="cDAQ1Mod1", channel_ind=2,
                     units="V",
                 )
 
@@ -752,7 +752,7 @@ class TestConfigure:
         ctx, task, mt = _build(mock_system, mock_constants, sample_rate=25600)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.configure()
@@ -768,7 +768,7 @@ class TestConfigure:
                                sample_rate=25600, samp_clk_rate=25600)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.configure()  # Should not raise
@@ -779,7 +779,7 @@ class TestConfigure:
                                sample_rate=25600, samp_clk_rate=25000)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError, match="[Ss]ample.?[Rr]ate|rate"):
@@ -790,7 +790,7 @@ class TestConfigure:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.configure()
@@ -815,7 +815,7 @@ class TestConfigure:
                                sample_rate=25600, samp_clk_rate=25000)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             with pytest.raises(ValueError):
@@ -837,7 +837,7 @@ class TestBaseTaskStart:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.configure()
@@ -890,11 +890,11 @@ class TestGetters:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.add_channel(
-                "accel_y", device_ind=0, channel_ind=1,
+                "accel_y", device="cDAQ1Mod1", channel_ind=1,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -907,13 +907,13 @@ class TestGetters:
             assert task.number_of_ch == 0
 
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             assert task.number_of_ch == 1
 
             task.add_channel(
-                "accel_y", device_ind=0, channel_ind=1,
+                "accel_y", device="cDAQ1Mod1", channel_ind=1,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             assert task.number_of_ch == 2
@@ -1295,7 +1295,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1313,7 +1313,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1331,11 +1331,11 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.add_channel(
-                "accel_y", device_ind=1, channel_ind=0,
+                "accel_y", device="cDAQ1Mod2", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1356,7 +1356,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=2,
+                "accel_x", device="cDAQ1Mod1", channel_ind=2,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=-50.0, max_val=50.0,
             )
@@ -1384,7 +1384,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "force_1", device_ind=0, channel_ind=0,
+                "force_1", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=22.5, sensitivity_units="mV/N", units="N",
             )
             task.save_config(path)
@@ -1404,7 +1404,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=0.0, max_val=50.0,
             )
@@ -1422,7 +1422,7 @@ class TestSaveConfig:
         ctx, task, mt = _build(mock_system, mock_constants)
         path = tmp_path / "config.toml"
         with ctx:
-            task.add_channel("v1", device_ind=0, channel_ind=0, units="V")
+            task.add_channel("v1", device="cDAQ1Mod1", channel_ind=0, units="V")
             task.save_config(path)
 
         with open(path, "rb") as f:
@@ -1441,7 +1441,7 @@ class TestSaveConfig:
             with patch("nidaqwrapper.ai_task.nidaqmx.Scale.create_lin_scale") as ms:
                 ms.return_value.name = "v1_scale"
                 task.add_channel(
-                    "v1", device_ind=0, channel_ind=0,
+                    "v1", device="cDAQ1Mod1", channel_ind=0,
                     units="V", scale=(2500.0, -100.0),
                 )
             # Set the custom scale slope/y_intercept on the channel mock
@@ -1470,7 +1470,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1489,7 +1489,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1521,7 +1521,7 @@ class TestSaveConfig:
         path = tmp_path / "config.toml"
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
             task.save_config(path)
@@ -1608,7 +1608,7 @@ units = "g"
             from nidaqwrapper.ai_task import AITask
             task = AITask.from_config(path)
 
-        # cDAQ1Mod2 is device_ind=1, so physical channel should be cDAQ1Mod2/ai0
+        # cDAQ1Mod2 is device="cDAQ1Mod2", so physical channel should be cDAQ1Mod2/ai0
         kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
         assert kwargs["physical_channel"] == "cDAQ1Mod2/ai0"
 
@@ -1881,8 +1881,14 @@ units = "g"
             with pytest.raises(ValueError, match="alias|device"):
                 AITask.from_config(path)
 
-    def test_device_not_in_system_raises(self, mock_system, mock_constants, tmp_path):
-        """from_config() raises RuntimeError when device name not found in system."""
+    def test_device_alias_passed_directly_to_add_channel(self, mock_system, mock_constants, tmp_path):
+        """from_config() passes device name directly to add_channel (no pre-validation).
+
+        Per design decision 3: from_config() no longer validates device names
+        against the system device list. The device name from the [devices]
+        alias is passed directly to add_channel(device=...). If the device
+        does not exist, nidaqmx raises DaqError at channel-creation time.
+        """
         path = self._write_config(tmp_path, """\
 [task]
 name = "test"
@@ -1912,8 +1918,14 @@ units = "g"
             patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):
             from nidaqwrapper.ai_task import AITask
-            with pytest.raises(RuntimeError, match="device|not found"):
-                AITask.from_config(path)
+            # from_config() does NOT pre-validate the device name;
+            # it passes "NonExistentDevice" directly to add_channel().
+            # The mock task accepts any device name, so no error is raised here.
+            task = AITask.from_config(path)
+
+        # Verify add_channel was called with device="NonExistentDevice"
+        kwargs = mock_ni_task.ai_channels.add_ai_accel_chan.call_args.kwargs
+        assert kwargs["physical_channel"] == "NonExistentDevice/ai0"
 
     def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [task] section is missing."""
@@ -1986,7 +1998,7 @@ class TestConfigRoundtrip:
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
             task.add_channel(
-                "accel_x", device_ind=0, channel_ind=0,
+                "accel_x", device="cDAQ1Mod1", channel_ind=0,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 min_val=-50.0, max_val=50.0,
             )
@@ -2168,7 +2180,7 @@ class TestFromTask:
 
             with pytest.raises(RuntimeError, match="Cannot add channels"):
                 task.add_channel(
-                    "new_ch", device_ind=0, channel_ind=1,
+                    "new_ch", device="cDAQ1Mod1", channel_ind=1,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 
@@ -2351,7 +2363,7 @@ class TestFromTaskTakeOwnership:
             task = AITask.from_task(ext, take_ownership=True)
             # Should not raise RuntimeError
             task.add_channel(
-                "new_ch", device_ind=0, channel_ind=1,
+                "new_ch", device="cDAQ1Mod1", channel_ind=1,
                 sensitivity=100.0, sensitivity_units="mV/g", units="g",
             )
 
@@ -2406,7 +2418,7 @@ class TestFromTaskTakeOwnership:
 
             with pytest.raises(RuntimeError, match="Cannot add channels"):
                 task.add_channel(
-                    "new_ch", device_ind=0, channel_ind=1,
+                    "new_ch", device="cDAQ1Mod1", channel_ind=1,
                     sensitivity=100.0, sensitivity_units="mV/g", units="g",
                 )
 

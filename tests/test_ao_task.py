@@ -271,7 +271,7 @@ class TestAddChannel:
         """add_channel() calls add_ao_voltage_chan() on the nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         mt.ao_channels.add_ao_voltage_chan.assert_called_once()
 
@@ -279,7 +279,7 @@ class TestAddChannel:
         """Physical channel string uses 'ao' prefix (not 'ai')."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["physical_channel"] == "cDAQ1Mod1/ao0"
@@ -288,7 +288,7 @@ class TestAddChannel:
         """Physical channel index is incorporated correctly."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_2", device_ind=0, channel_ind=2)
+            task.add_channel("ao_2", device="cDAQ1Mod1", channel_ind=2)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["physical_channel"] == "cDAQ1Mod1/ao2"
@@ -297,7 +297,7 @@ class TestAddChannel:
         """Channel name is forwarded as name_to_assign_to_channel."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("my_output", device_ind=0, channel_ind=0)
+            task.add_channel("my_output", device="cDAQ1Mod1", channel_ind=0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["name_to_assign_to_channel"] == "my_output"
@@ -306,7 +306,7 @@ class TestAddChannel:
         """Default min_val is -10.0."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["min_val"] == -10.0
@@ -315,7 +315,7 @@ class TestAddChannel:
         """Default max_val is 10.0."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["max_val"] == 10.0
@@ -324,7 +324,7 @@ class TestAddChannel:
         """Custom min_val and max_val are forwarded to nidaqmx."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0,
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0,
                              min_val=-5.0, max_val=5.0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
@@ -332,10 +332,10 @@ class TestAddChannel:
         assert kwargs["max_val"] == 5.0
 
     def test_second_device(self, mock_system, mock_constants):
-        """Channel on device_ind=1 uses the second device name."""
+        """Channel on a second device uses that device's name."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=1, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod2", channel_ind=0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["physical_channel"] == "cDAQ1Mod2/ao0"
@@ -344,24 +344,24 @@ class TestAddChannel:
         """Adding a second channel with the same name raises ValueError."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             with pytest.raises(ValueError, match="ao_0"):
-                task.add_channel("ao_0", device_ind=0, channel_ind=1)
+                task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=1)
 
     def test_duplicate_physical_channel_raises(self, mock_system, mock_constants):
         """Adding two channels for the same physical (device, channel) raises ValueError."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             with pytest.raises(ValueError, match="already"):
-                task.add_channel("ao_1", device_ind=0, channel_ind=0)
+                task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=0)
 
     def test_same_channel_ind_on_different_device_ok(self, mock_system, mock_constants):
         """Same channel_ind on different devices is allowed."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=1, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod2", channel_ind=0)
 
         assert mt.ao_channels.add_ao_voltage_chan.call_count == 2
 
@@ -369,27 +369,27 @@ class TestAddChannel:
         """min_val=0.0 is forwarded to nidaqmx (not treated as falsy)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0,
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0,
                              min_val=0.0, max_val=5.0)
 
         kwargs = mt.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["min_val"] == 0.0
         assert kwargs["max_val"] == 5.0
 
-    def test_out_of_range_device_ind_raises(self, mock_system, mock_constants):
-        """device_ind beyond available device list raises ValueError."""
+    def test_reject_empty_device_string(self, mock_system, mock_constants):
+        """Empty device string raises ValueError with clear message."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            with pytest.raises(ValueError, match="device"):
-                task.add_channel("ao_0", device_ind=99, channel_ind=0)
+            with pytest.raises(ValueError, match="device must be a non-empty string"):
+                task.add_channel("ao_0", device="", channel_ind=0)
 
     def test_multiple_channels_added(self, mock_system, mock_constants):
         """Multiple channels can be added to one task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
-            task.add_channel("ao_2", device_ind=0, channel_ind=2)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
+            task.add_channel("ao_2", device="cDAQ1Mod1", channel_ind=2)
 
         assert mt.ao_channels.add_ao_voltage_chan.call_count == 3
 
@@ -405,7 +405,7 @@ class TestConfigure:
         """configure() calls cfg_samp_clk_timing with the configured sample rate."""
         ctx, task, mt = _build(mock_system, mock_constants, sample_rate=10000)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
 
         mt.timing.cfg_samp_clk_timing.assert_called_once()
@@ -416,7 +416,7 @@ class TestConfigure:
         """configure() passes CONTINUOUS sample mode to cfg_samp_clk_timing."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
 
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
@@ -428,7 +428,7 @@ class TestConfigure:
             mock_system, mock_constants, sample_rate=10000, samples_per_channel=20000
         )
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
 
         kwargs = mt.timing.cfg_samp_clk_timing.call_args.kwargs
@@ -438,7 +438,7 @@ class TestConfigure:
         """configure() sets _out_stream.regen_mode to ALLOW_REGENERATION."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
 
         assert mt._out_stream.regen_mode == mock_constants.RegenerationMode.ALLOW_REGENERATION
@@ -448,7 +448,7 @@ class TestConfigure:
         ctx, task, mt = _build(mock_system, mock_constants,
                                sample_rate=10000, samp_clk_rate=10000)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()  # Should not raise
 
     def test_validates_sample_rate_fail(self, mock_system, mock_constants):
@@ -456,7 +456,7 @@ class TestConfigure:
         ctx, task, mt = _build(mock_system, mock_constants,
                                sample_rate=10000, samp_clk_rate=10240)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             with pytest.raises(ValueError, match="[Ss]ample.?[Rr]ate|rate"):
                 task.configure()
 
@@ -464,7 +464,7 @@ class TestConfigure:
         """configure() does NOT call task.start() on the underlying nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
 
         mt.start.assert_not_called()
@@ -485,7 +485,7 @@ class TestConfigure:
         ctx, task, mt = _build(mock_system, mock_constants,
                                sample_rate=10000, samp_clk_rate=10240)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             with pytest.raises(ValueError):
                 task.configure()
 
@@ -498,7 +498,7 @@ class TestConfigure:
         """configure() followed by start() calls task.start() on the nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
             task.start()
 
@@ -517,7 +517,7 @@ class TestBaseTaskStart:
         """start() delegates to self.task.start() on the nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()
             task.start()
 
@@ -559,8 +559,8 @@ class TestGetters:
         """channel_list returns names from the nidaqmx task."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
 
         assert task.channel_list == ["ao_0", "ao_1"]
 
@@ -577,10 +577,10 @@ class TestGetters:
         with ctx:
             assert task.number_of_ch == 0
 
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             assert task.number_of_ch == 1
 
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
             assert task.number_of_ch == 2
 
     def test_sample_rate_from_attribute(self, mock_system, mock_constants):
@@ -602,8 +602,8 @@ class TestGenerate:
         """2D (n_samples, n_channels) input is transposed to (n_channels, n_samples)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
             signal = np.random.rand(1000, 2)
             task.generate(signal)
 
@@ -614,7 +614,7 @@ class TestGenerate:
         """1D (n_samples,) input is passed directly (no transpose)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             signal = np.random.rand(1000)
             task.generate(signal)
 
@@ -630,7 +630,7 @@ class TestGenerate:
         """
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             signal = np.random.rand(1000, 1)
             task.generate(signal)
 
@@ -642,7 +642,7 @@ class TestGenerate:
         """generate() calls write() with auto_start=True."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             signal = np.random.rand(1000)
             task.generate(signal)
 
@@ -656,8 +656,8 @@ class TestGenerate:
         """
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
             signal = np.random.rand(1000, 2)
             task.generate(signal)
 
@@ -669,8 +669,8 @@ class TestGenerate:
         """Transposed 2D data contains the same values in the correct layout."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
             signal = np.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])  # (3, 2)
             task.generate(signal)
 
@@ -846,7 +846,7 @@ class TestSaveConfig:
         """save_config() creates a file that can be parsed as TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -862,7 +862,7 @@ class TestSaveConfig:
         """[task] section contains type='output' (not 'input')."""
         ctx, task, mt = _build(mock_system, mock_constants, sample_rate=10000)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -878,7 +878,7 @@ class TestSaveConfig:
             task_name="signal_gen", sample_rate=20000
         )
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -892,8 +892,8 @@ class TestSaveConfig:
         """[devices] section contains unique device aliases for used devices."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=1, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod2", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -910,7 +910,7 @@ class TestSaveConfig:
         """[[channels]] entries contain name, device alias, channel, min_val, max_val."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=2,
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=2,
                              min_val=-5.0, max_val=5.0)
 
         path = tmp_path / "config.toml"
@@ -932,7 +932,7 @@ class TestSaveConfig:
         """Default min_val=-10.0 and max_val=10.0 are saved in TOML."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -947,8 +947,8 @@ class TestSaveConfig:
         """Multiple channels are all serialised to [[channels]] entries."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
-            task.add_channel("ao_1", device_ind=0, channel_ind=1)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
+            task.add_channel("ao_1", device="cDAQ1Mod1", channel_ind=1)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -961,7 +961,7 @@ class TestSaveConfig:
         """save_config() includes header comment with version and timestamp."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -990,7 +990,7 @@ class TestSaveConfig:
         """save_config() annotates device lines with product type comments."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
 
         path = tmp_path / "config.toml"
         task.save_config(path)
@@ -1073,7 +1073,7 @@ max_val = 10.0
             from nidaqwrapper.ao_task import AOTask
             AOTask.from_config(path)
 
-        # cDAQ1Mod2 is device_ind=1, so physical channel should be cDAQ1Mod2/ao0
+        # cDAQ1Mod2 is device="cDAQ1Mod2", so physical channel should be cDAQ1Mod2/ao0
         kwargs = mock_ni_task.ao_channels.add_ao_voltage_chan.call_args.kwargs
         assert kwargs["physical_channel"] == "cDAQ1Mod2/ao0"
 
@@ -1189,8 +1189,14 @@ max_val = 10.0
             with pytest.raises(ValueError, match="alias|device"):
                 AOTask.from_config(path)
 
-    def test_device_not_in_system_raises(self, mock_system, mock_constants, tmp_path):
-        """from_config() raises RuntimeError when device name is not in the system."""
+    def test_device_alias_passed_directly_to_add_channel(self, mock_system, mock_constants, tmp_path):
+        """from_config() passes device name directly to add_channel (no pre-validation).
+
+        Per design decision 3: from_config() no longer validates device names
+        against the system device list. The device name from the [devices]
+        alias is passed directly to add_channel(device=...). If the device
+        does not exist, nidaqmx raises DaqError at channel-creation time.
+        """
         path = self._write_config(tmp_path, """\
 [task]
 name = "test"
@@ -1218,8 +1224,14 @@ max_val = 10.0
             patch("nidaqwrapper.ao_task.constants", mock_constants),
         ):
             from nidaqwrapper.ao_task import AOTask
-            with pytest.raises(RuntimeError, match="device|not found"):
-                AOTask.from_config(path)
+            # from_config() does NOT pre-validate the device name;
+            # it passes "NonExistentDevice" directly to add_channel().
+            # The mock task accepts any device name, so no error is raised here.
+            task = AOTask.from_config(path)
+
+        # Verify add_channel was called with device="NonExistentDevice"
+        kwargs = mock_ni_task.ao_channels.add_ao_voltage_chan.call_args.kwargs
+        assert kwargs["physical_channel"] == "NonExistentDevice/ao0"
 
     def test_missing_task_section_raises(self, mock_system, mock_constants, tmp_path):
         """from_config() raises ValueError when [task] section is missing."""
@@ -1486,13 +1498,13 @@ class TestFromTask:
             task = AOTask.from_task(external)
 
             with pytest.raises(RuntimeError, match="Cannot add channels"):
-                task.add_channel("new_channel", device_ind=0, channel_ind=1)
+                task.add_channel("new_channel", device="cDAQ1Mod1", channel_ind=1)
 
     def test_add_channel_allowed_when_owns_task(self, mock_system, mock_constants):
         """add_channel() succeeds when _owns_task is True (normal constructor)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)  # Should not raise
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)  # Should not raise
 
         assert task.number_of_ch == 1
 
@@ -1511,7 +1523,7 @@ class TestFromTask:
         """configure() succeeds when _owns_task is True (normal constructor)."""
         ctx, task, mt = _build(mock_system, mock_constants)
         with ctx:
-            task.add_channel("ao_0", device_ind=0, channel_ind=0)
+            task.add_channel("ao_0", device="cDAQ1Mod1", channel_ind=0)
             task.configure()  # Should not raise
 
     def test_clear_task_does_not_close_external(self, mock_system, mock_constants):
@@ -1695,7 +1707,7 @@ class TestFromTaskTakeOwnership:
             task = AOTask.from_task(ext, take_ownership=True)
             # Should not raise RuntimeError
             task.add_channel(
-                "ao_new", device_ind=0, channel_ind=1,
+                "ao_new", device="cDAQ1Mod1", channel_ind=1,
                 min_val=-5.0, max_val=5.0,
             )
 
@@ -1744,7 +1756,7 @@ class TestFromTaskTakeOwnership:
             from nidaqwrapper.ao_task import AOTask
             task = AOTask.from_task(ext, take_ownership=False)
             with pytest.raises(RuntimeError, match="Cannot add channels"):
-                task.add_channel("ao_new", device_ind=0, channel_ind=1)
+                task.add_channel("ao_new", device="cDAQ1Mod1", channel_ind=1)
 
 
 # ===========================================================================
