@@ -21,7 +21,7 @@ through unchanged.
 Examples
 --------
 >>> task = AOTask("sig_gen", sample_rate=10000)
->>> task.add_channel("ao_0", device_ind=0, channel_ind=0)
+>>> task.add_channel("ao_0", device='Dev1', channel_ind=0)
 >>> task.start()
 >>> task.generate(signal_array)
 >>> task.clear_task()
@@ -29,7 +29,7 @@ Examples
 Or as a context manager::
 
     with AOTask("sig_gen", 10000) as task:
-        task.add_channel("ao_0", device_ind=0, channel_ind=0)
+        task.add_channel("ao_0", device='Dev1', channel_ind=0)
         task.start()
         task.generate(signal_array)
 """
@@ -122,7 +122,7 @@ class AOTask(BaseTask):
     def add_channel(
         self,
         channel_name: str,
-        device_ind: int,
+        device: str,
         channel_ind: int,
         min_val: float = -10.0,
         max_val: float = 10.0,
@@ -135,8 +135,11 @@ class AOTask(BaseTask):
         ----------
         channel_name : str
             Logical name for the channel.
-        device_ind : int
-            Index into :attr:`device_list` identifying the target device.
+        device : str
+            NI-DAQmx device name string (e.g. ``'Dev1'``, ``'cDAQ1Mod1'``,
+            ``'SimDev1'``).  Must be a non-empty string.  The driver
+            validates the device name at channel-creation time and raises
+            ``DaqError`` if the device does not exist.
         channel_ind : int
             AO channel number on the device (e.g. 0 for ``ao0``).
         min_val : float, optional
@@ -147,8 +150,8 @@ class AOTask(BaseTask):
         Raises
         ------
         ValueError
-            If ``channel_name`` is a duplicate, the ``(device_ind, channel_ind)``
-            pair is already used, or ``device_ind`` is out of range.
+            If ``channel_name`` is a duplicate, the ``(device, channel_ind)``
+            pair is already used, or ``device`` is an empty string.
         RuntimeError
             If this task wraps an externally-provided nidaqmx.Task
             (created via :meth:`from_task`).
@@ -166,21 +169,18 @@ class AOTask(BaseTask):
                 f"Channel with duplicate name '{channel_name}' already exists."
             )
 
-        # Reject out-of-range device_ind before building the physical channel string
-        if device_ind not in range(len(self.device_list)):
-            raise ValueError(
-                f"device_ind={device_ind} is out of range. "
-                f"Available devices ({len(self.device_list)}): {self.device_list}"
-            )
+        # Validate device is a non-empty string
+        if not device or not isinstance(device, str):
+            raise ValueError("device must be a non-empty string")
 
-        physical_channel = f"{self.device_list[device_ind]}/ao{channel_ind}"
+        physical_channel = f"{device}/ao{channel_ind}"
 
         # Duplicate physical channel detection: iterate the live task channels
         for ch in self.task.ao_channels:
             if ch.physical_channel.name == physical_channel:
                 raise ValueError(
                     f"Physical channel ao{channel_ind} on device "
-                    f"'{self.device_list[device_ind]}' is already in use."
+                    f"'{device}' is already in use."
                 )
 
         self.task.ao_channels.add_ao_voltage_chan(
@@ -364,9 +364,6 @@ class AOTask(BaseTask):
         ValueError
             If the ``[task]`` or ``[devices]`` section is absent, or if a
             channel references an unknown device alias.
-        RuntimeError
-            If a device name from the config is not present on the
-            current system.
         tomllib.TOMLDecodeError
             On syntactically invalid TOML (propagated from the parser).
 
@@ -403,11 +400,6 @@ class AOTask(BaseTask):
             samples_per_channel=samples_per_channel,
         )
 
-        # Build name → index map from the live device list
-        name_to_ind: dict[str, int] = {
-            name: ind for ind, name in enumerate(task.device_list)
-        }
-
         for ch in data.get("channels", []):
             alias = ch["device"]
             if alias not in alias_to_name:
@@ -417,17 +409,10 @@ class AOTask(BaseTask):
                 )
 
             device_name = alias_to_name[alias]
-            if device_name not in name_to_ind:
-                raise RuntimeError(
-                    f"Device '{device_name}' (alias '{alias}') was not found "
-                    f"in the system. Available devices: {task.device_list}"
-                )
-
-            device_ind = name_to_ind[device_name]
 
             task.add_channel(
                 channel_name=ch["name"],
-                device_ind=device_ind,
+                device=device_name,
                 channel_ind=ch["channel"],
                 min_val=ch.get("min_val", -10.0),
                 max_val=ch.get("max_val", 10.0),

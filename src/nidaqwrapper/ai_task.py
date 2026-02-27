@@ -63,7 +63,7 @@ class AITask(BaseTask):
     Examples
     --------
     >>> task = AITask("vibration_test", sample_rate=25600)
-    >>> task.add_channel("accel_x", device_ind=0, channel_ind=0,
+    >>> task.add_channel("accel_x", device='Dev1', channel_ind=0,
     ...                  sensitivity=100.0, sensitivity_units="mV/g",
     ...                  units="g")
     >>> task.start()
@@ -110,7 +110,7 @@ class AITask(BaseTask):
     def add_channel(
         self,
         channel_name: str,
-        device_ind: int,
+        device: str,
         channel_ind: int,
         sensitivity: float | None = None,
         sensitivity_units: str | None = None,
@@ -131,8 +131,11 @@ class AITask(BaseTask):
         ----------
         channel_name : str
             Unique name for this channel.
-        device_ind : int
-            Index into :attr:`device_list` identifying the target device.
+        device : str
+            NI-DAQmx device name string (e.g. ``'Dev1'``, ``'cDAQ1Mod1'``,
+            ``'SimDev1'``).  Must be a non-empty string.  The driver
+            validates the device name at channel-creation time and raises
+            ``DaqError`` if the device does not exist.
         channel_ind : int
             Physical analog-input channel number on the device.
         sensitivity : float, optional
@@ -156,8 +159,9 @@ class AITask(BaseTask):
         Raises
         ------
         ValueError
-            Duplicate channel name, duplicate physical channel, out-of-range
-            device, invalid units, missing sensitivity, or missing units.
+            Duplicate channel name, duplicate physical channel, empty
+            device string, invalid units, missing sensitivity, or missing
+            units.
         TypeError
             Invalid *scale* type.
         RuntimeError
@@ -185,21 +189,16 @@ class AITask(BaseTask):
                 f"Channel name '{channel_name}' already exists in this task."
             )
 
-        if device_ind not in range(len(self.device_list)):
-            raise ValueError(
-                f"device_ind {device_ind} is out of range. "
-                f"Available devices: {self.device_list}"
-            )
+        if not device or not isinstance(device, str):
+            raise ValueError("device must be a non-empty string")
 
         # Duplicate physical channel detection: iterate the live task channels
-        physical_channel = (
-            f"{self.device_list[device_ind]}/ai{channel_ind}"
-        )
+        physical_channel = f"{device}/ai{channel_ind}"
         for ch in self.task.ai_channels:
             if ch.physical_channel.name == physical_channel:
                 raise ValueError(
                     f"Physical channel ai{channel_ind} on device "
-                    f"'{self.device_list[device_ind]}' is already in use."
+                    f"'{device}' is already in use."
                 )
 
         # -- Scale type validation ------------------------------------------
@@ -531,9 +530,6 @@ class AITask(BaseTask):
         ValueError
             If the ``[task]`` or ``[devices]`` section is absent, or if a
             channel references an unknown device alias.
-        RuntimeError
-            If a device name from the config is not present on the
-            current system.
         tomllib.TOMLDecodeError
             On syntactically invalid TOML (propagated from the parser).
 
@@ -564,11 +560,6 @@ class AITask(BaseTask):
 
         task = cls(task_section["name"], sample_rate=task_section["sample_rate"])
 
-        # Build name → index map from the live device list
-        name_to_ind: dict[str, int] = {
-            name: ind for ind, name in enumerate(task.device_list)
-        }
-
         for ch in data.get("channels", []):
             alias = ch["device"]
             if alias not in alias_to_name:
@@ -578,13 +569,6 @@ class AITask(BaseTask):
                 )
 
             device_name = alias_to_name[alias]
-            if device_name not in name_to_ind:
-                raise RuntimeError(
-                    f"Device '{device_name}' (alias '{alias}') was not found "
-                    f"in the system. Available devices: {task.device_list}"
-                )
-
-            device_ind = name_to_ind[device_name]
 
             # TOML arrays become Python lists; convert to tuple for add_channel()
             raw_scale = ch.get("scale")
@@ -596,7 +580,7 @@ class AITask(BaseTask):
 
             task.add_channel(
                 channel_name=ch["name"],
-                device_ind=device_ind,
+                device=device_name,
                 channel_ind=ch["channel"],
                 sensitivity=ch.get("sensitivity"),
                 sensitivity_units=ch.get("sensitivity_units"),
