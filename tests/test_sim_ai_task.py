@@ -27,7 +27,7 @@ pytestmark = pytest.mark.simulated
 class TestAITaskSimulated:
     """Full AITask lifecycle tests with simulated device."""
 
-    def test_constructor_and_add_channel(self, sim_device_index):
+    def test_constructor_and_add_channel(self, sim_device_name):
         """Create AITask, add 2 voltage channels, verify properties."""
         from nidaqwrapper import AITask
 
@@ -35,10 +35,10 @@ class TestAITaskSimulated:
         try:
             # Add 2 voltage channels
             task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             task.add_channel(
-                "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
+                "ai1", device=sim_device_name, channel_ind=1, units="V"
             )
 
             # Verify properties
@@ -49,7 +49,7 @@ class TestAITaskSimulated:
         finally:
             task.clear_task()
 
-    def test_configure_and_acquire_finite(self, sim_device_index):
+    def test_configure_and_acquire_finite(self, sim_device_name):
         """Configure and start task, acquire exactly n_samples, verify shape and data."""
         from nidaqwrapper import AITask
 
@@ -57,10 +57,10 @@ class TestAITaskSimulated:
         try:
             # Add 2 voltage channels
             task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             task.add_channel(
-                "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
+                "ai1", device=sim_device_name, channel_ind=1, units="V"
             )
 
             # Configure timing then start acquisition
@@ -81,14 +81,14 @@ class TestAITaskSimulated:
         finally:
             task.clear_task()
 
-    def test_continuous_acquire(self, sim_device_index):
+    def test_continuous_acquire(self, sim_device_name):
         """Start task, sleep, call acquire() with no args, verify samples returned."""
         from nidaqwrapper import AITask
 
         task = AITask("test_ai_cont", sample_rate=10000)
         try:
             task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
 
             task.configure()
@@ -151,7 +151,7 @@ class TestAITaskSimulated:
             except Exception:
                 pass
 
-    def test_context_manager_cleanup(self, sim_device_index):
+    def test_context_manager_cleanup(self, sim_device_name):
         """Use AITask in with block, verify cleanup, verify resources released."""
         from nidaqwrapper import AITask
 
@@ -160,7 +160,7 @@ class TestAITaskSimulated:
         # First use in context manager
         with AITask(task_name, sample_rate=10000) as task:
             task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             task.configure()
             task.start()
@@ -174,12 +174,12 @@ class TestAITaskSimulated:
         # Verify resources released: can create new task with same name
         with AITask(task_name, sample_rate=10000) as task2:
             task2.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             task2.configure()
 
     def test_save_config_and_from_config_round_trip(
-        self, sim_device_index, tmp_path
+        self, sim_device_name, tmp_path
     ):
         """Create AITask, save_config to TOML, from_config to recreate, verify works."""
         from nidaqwrapper import AITask
@@ -190,10 +190,10 @@ class TestAITaskSimulated:
         task1 = AITask("test_ai_save", sample_rate=10000)
         try:
             task1.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             task1.add_channel(
-                "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
+                "ai1", device=sim_device_name, channel_ind=1, units="V"
             )
 
             # Configure task (required before save_config)
@@ -300,7 +300,7 @@ class TestAITaskCustomScaleSimulated:
     """Validate add_channel() with custom linear scale on the PCIe-6361."""
 
     def test_custom_scale_channel_creates_and_reads(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """Custom scale (scalar slope) channel creates, starts, and acquires.
 
@@ -315,7 +315,7 @@ class TestAITaskCustomScaleSimulated:
             task = AITask("test_custom_scale", sample_rate=10000)
             task.add_channel(
                 "accel_0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 units="m/s2",
                 scale=0.5,
@@ -343,7 +343,7 @@ class TestAITaskCustomScaleSimulated:
                     pass
 
     def test_custom_scale_channel_with_offset(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """Custom scale (slope, y_intercept) tuple form creates and configures.
 
@@ -357,7 +357,7 @@ class TestAITaskCustomScaleSimulated:
             task = AITask("test_custom_scale_offset", sample_rate=5000)
             task.add_channel(
                 "force_0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 units="N",
                 scale=(100.0, 5.0),

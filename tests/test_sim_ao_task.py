@@ -26,7 +26,7 @@ class TestAOTaskSimulated:
     """Full AOTask lifecycle tests with simulated device."""
 
     def test_constructor_add_channel_and_generate_single_channel(
-        self, sim_device_index
+        self, sim_device_name
     ):
         """Create AOTask, add 1 AO channel, call start/generate, verify no error.
 
@@ -38,7 +38,7 @@ class TestAOTaskSimulated:
         try:
             # Add 1 AO voltage channel
             task.add_channel(
-                "ao0", device_ind=sim_device_index, channel_ind=0,
+                "ao0", device=sim_device_name, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
 
@@ -53,7 +53,7 @@ class TestAOTaskSimulated:
         finally:
             task.clear_task()
 
-    def test_multi_channel_generate(self, sim_device_index):
+    def test_multi_channel_generate(self, sim_device_name):
         """Add 2 AO channels, generate with shape (n_samples, n_channels), verify no error.
 
         Tests the np.ascontiguousarray transposition path.
@@ -64,11 +64,11 @@ class TestAOTaskSimulated:
         try:
             # Add 2 AO voltage channels (ao0, ao1)
             task.add_channel(
-                "ao0", device_ind=sim_device_index, channel_ind=0,
+                "ao0", device=sim_device_name, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
             task.add_channel(
-                "ao1", device_ind=sim_device_index, channel_ind=1,
+                "ao1", device=sim_device_name, channel_ind=1,
                 min_val=-10.0, max_val=10.0
             )
 
@@ -131,7 +131,7 @@ class TestAOTaskSimulated:
             except Exception:
                 pass
 
-    def test_context_manager_cleanup(self, sim_device_index):
+    def test_context_manager_cleanup(self, sim_device_name):
         """Use AOTask in with block, verify cleanup."""
         from nidaqwrapper import AOTask
 
@@ -140,7 +140,7 @@ class TestAOTaskSimulated:
         # First use in context manager
         with AOTask(task_name, sample_rate=10000) as task:
             task.add_channel(
-                "ao0", device_ind=sim_device_index, channel_ind=0,
+                "ao0", device=sim_device_name, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
             task.configure()
@@ -154,13 +154,13 @@ class TestAOTaskSimulated:
         # Verify resources released: can create new task with same name
         with AOTask(task_name, sample_rate=10000) as task2:
             task2.add_channel(
-                "ao0", device_ind=sim_device_index, channel_ind=0,
+                "ao0", device=sim_device_name, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
             task2.configure()
 
     def test_save_config_and_from_config_round_trip(
-        self, sim_device_index, tmp_path
+        self, sim_device_name, tmp_path
     ):
         """Create AOTask, save_config to TOML, from_config to recreate, verify works."""
         from nidaqwrapper import AOTask
@@ -171,11 +171,11 @@ class TestAOTaskSimulated:
         task1 = AOTask("test_ao_save", sample_rate=10000)
         try:
             task1.add_channel(
-                "ao0", device_ind=sim_device_index, channel_ind=0,
+                "ao0", device=sim_device_name, channel_ind=0,
                 min_val=-10.0, max_val=10.0
             )
             task1.add_channel(
-                "ao1", device_ind=sim_device_index, channel_ind=1,
+                "ao1", device=sim_device_name, channel_ind=1,
                 min_val=-5.0, max_val=5.0
             )
 

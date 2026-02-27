@@ -309,7 +309,7 @@ def sim_task_name(simulated_device_name):
 
 
 @pytest.fixture
-def sim_ai_task(sim_device_index):
+def sim_ai_task(sim_device_name):
     """Create an AITask with 2 AI channels on SimDev1 at 10kHz.
 
     Yields
@@ -323,10 +323,10 @@ def sim_ai_task(sim_device_index):
     try:
         # Add 2 AI voltage channels (ai0, ai1)
         task.add_channel(
-            "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+            "ai0", device=sim_device_name, channel_ind=0, units="V"
         )
         task.add_channel(
-            "ai1", device_ind=sim_device_index, channel_ind=1, units="V"
+            "ai1", device=sim_device_name, channel_ind=1, units="V"
         )
         yield task
     finally:
@@ -337,7 +337,7 @@ def sim_ai_task(sim_device_index):
 
 
 @pytest.fixture
-def sim_ao_task(sim_device_index):
+def sim_ao_task(sim_device_name):
     """Create an AOTask with 1 AO channel on SimDev1 at 10kHz.
 
     Yields
@@ -352,7 +352,7 @@ def sim_ao_task(sim_device_index):
         # Add 1 AO voltage channel (ao0)
         task.add_channel(
             "ao0",
-            device_ind=sim_device_index,
+            device=sim_device_name,
             channel_ind=0,
             min_val=-10.0,
             max_val=10.0,
@@ -412,20 +412,12 @@ def sim_do_task(simulated_device_name):
 
 
 @pytest.fixture
-def sim_device_index(simulated_device_name):
-    """Find the device index for SimDev1 in the system device list.
+def sim_device_name(simulated_device_name):
+    """Return the device name string for SimDev1.
 
     Returns
     -------
-    int
-        Index of SimDev1 in nidaqmx.system.System.local().devices.
+    str
+        Device name string (e.g. "SimDev1") for use in add_channel(device=...).
     """
-    import nidaqmx.system
-
-    system = nidaqmx.system.System.local()
-    device_names = [d.name for d in system.devices]
-
-    if simulated_device_name not in device_names:
-        pytest.skip(f"Simulated device {simulated_device_name} not found")
-
-    return device_names.index(simulated_device_name)
+    return simulated_device_name

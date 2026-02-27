@@ -162,7 +162,7 @@ class TestExternalTaskRestrictions:
             with pytest.raises(RuntimeError, match="Cannot add channels"):
                 wrapper.add_channel(
                     "ai1",
-                    device_ind=0,
+                    device=sim_device_name,
                     channel_ind=1,
                     units="V",
                 )

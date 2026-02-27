@@ -75,7 +75,7 @@ class TestHandlerProgrammaticAITask:
     """Validate DAQHandler with programmatic AITask."""
 
     def test_programmatic_aitask_lifecycle(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """Configure DAQHandler with AITask, connect, read, disconnect.
 
@@ -85,8 +85,8 @@ class TestHandlerProgrammaticAITask:
         from nidaqwrapper import AITask, DAQHandler
 
         task = AITask("test_handler_ai", sample_rate=10000)
-        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
-        task.add_channel("ai1", device_ind=sim_device_index, channel_ind=1, units="V")
+        task.add_channel("ai0", device=sim_device_name, channel_ind=0, units="V")
+        task.add_channel("ai1", device=sim_device_name, channel_ind=1, units="V")
 
         handler = DAQHandler()
         try:
@@ -172,7 +172,7 @@ class TestHandlerRawTaskInjection:
 class TestHandlerTriggeredAcquisition:
     """Validate set_trigger() and acquire() with pyTrigger."""
 
-    def test_triggered_acquisition(self, sim_device_index: int) -> None:
+    def test_triggered_acquisition(self, sim_device_name: str) -> None:
         """Configure trigger, acquire n_samples, verify shape.
 
         On simulated devices, triggers fire quickly because simulated noise
@@ -185,7 +185,7 @@ class TestHandlerTriggeredAcquisition:
         n_samples = 1000
 
         task = AITask("test_trigger", sample_rate=10000)
-        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+        task.add_channel("ai0", device=sim_device_name, channel_ind=0, units="V")
 
         handler = DAQHandler()
         try:
@@ -211,7 +211,7 @@ class TestHandlerTriggeredAcquisition:
             handler.disconnect()
 
     def test_triggered_acquisition_return_dict(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """acquire(return_dict=True) returns dict with channel names and time."""
         pytest.importorskip("pyTrigger", reason="pyTrigger not installed")
@@ -221,7 +221,7 @@ class TestHandlerTriggeredAcquisition:
         n_samples = 500
 
         task = AITask("test_trigger_dict", sample_rate=10000)
-        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+        task.add_channel("ai0", device=sim_device_name, channel_ind=0, units="V")
 
         handler = DAQHandler()
         try:
@@ -373,7 +373,7 @@ class TestHandlerDigitalIntegration:
 class TestHandlerContextManager:
     """Validate context manager cleanup."""
 
-    def test_context_manager_normal_exit(self, sim_device_index: int) -> None:
+    def test_context_manager_normal_exit(self, sim_device_name: str) -> None:
         """Resources released on normal with-block exit."""
         from nidaqwrapper import AITask, DAQHandler
 
@@ -382,7 +382,7 @@ class TestHandlerContextManager:
         with DAQHandler() as handler:
             task = AITask(task_name, sample_rate=10000)
             task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
 
             handler.configure(task_in=task)
@@ -400,14 +400,14 @@ class TestHandlerContextManager:
         new_task = AITask(task_name, sample_rate=10000)
         try:
             new_task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             new_task.configure()
         finally:
             new_task.clear_task()
 
     def test_context_manager_exception_cleanup(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """Resources released even when exception occurs in with-block."""
         from nidaqwrapper import AITask, DAQHandler
@@ -418,7 +418,7 @@ class TestHandlerContextManager:
             with DAQHandler() as handler:
                 task = AITask(task_name, sample_rate=10000)
                 task.add_channel(
-                    "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                    "ai0", device=sim_device_name, channel_ind=0, units="V"
                 )
 
                 handler.configure(task_in=task)
@@ -430,7 +430,7 @@ class TestHandlerContextManager:
         new_task = AITask(task_name, sample_rate=10000)
         try:
             new_task.add_channel(
-                "ai0", device_ind=sim_device_index, channel_ind=0, units="V"
+                "ai0", device=sim_device_name, channel_ind=0, units="V"
             )
             new_task.configure()
         finally:
@@ -470,7 +470,7 @@ class TestHandlerBlockingRead:
 class TestHandlerNonBlockingAcquire:
     """Validate the non-blocking Future path of DAQHandler.acquire()."""
 
-    def test_acquire_returns_future(self, sim_device_index: int) -> None:
+    def test_acquire_returns_future(self, sim_device_name: str) -> None:
         """acquire(blocking=False) returns a Future whose result is correct.
 
         Verifies:
@@ -484,7 +484,7 @@ class TestHandlerNonBlockingAcquire:
 
         n_samples = 500
         task = AITask("test_future_result", sample_rate=10000)
-        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+        task.add_channel("ai0", device=sim_device_name, channel_ind=0, units="V")
 
         handler = DAQHandler()
         try:
@@ -518,7 +518,7 @@ class TestHandlerNonBlockingAcquire:
             handler.disconnect()
 
     def test_acquire_nonblocking_does_not_block(
-        self, sim_device_index: int
+        self, sim_device_name: str
     ) -> None:
         """acquire(blocking=False) returns in well under 1 second.
 
@@ -531,7 +531,7 @@ class TestHandlerNonBlockingAcquire:
 
         n_samples = 200
         task = AITask("test_nonblocking_timing", sample_rate=10000)
-        task.add_channel("ai0", device_ind=sim_device_index, channel_ind=0, units="V")
+        task.add_channel("ai0", device=sim_device_name, channel_ind=0, units="V")
 
         handler = DAQHandler()
         try:

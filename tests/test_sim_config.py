@@ -17,7 +17,7 @@ class TestAITaskConfigRoundTrip:
     """Test TOML config persistence for AITask."""
 
     def test_save_config_produces_valid_toml(
-        self, simulated_device_name, sim_device_index, tmp_path
+        self, simulated_device_name, sim_device_name, tmp_path
     ):
         """Test that save_config() produces a valid TOML file.
 
@@ -29,7 +29,7 @@ class TestAITaskConfigRoundTrip:
             # Add 2 channels
             ai_task.add_channel(
                 "ai0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 units="V",
                 min_val=-5.0,
@@ -37,7 +37,7 @@ class TestAITaskConfigRoundTrip:
             )
             ai_task.add_channel(
                 "ai1",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=1,
                 units="V",
                 min_val=-10.0,
@@ -81,7 +81,7 @@ class TestAITaskConfigRoundTrip:
         finally:
             ai_task.clear_task()
 
-    def test_from_config_round_trip(self, simulated_device_name, sim_device_index, tmp_path):
+    def test_from_config_round_trip(self, simulated_device_name, sim_device_name, tmp_path):
         """Test from_config() round-trip: save, load, verify task recreated.
 
         Creates AITask, saves config, loads with from_config(), starts the
@@ -92,7 +92,7 @@ class TestAITaskConfigRoundTrip:
         try:
             ai_task_orig.add_channel(
                 "ch0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 units="V",
                 min_val=-10.0,
@@ -100,7 +100,7 @@ class TestAITaskConfigRoundTrip:
             )
             ai_task_orig.add_channel(
                 "ch1",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=1,
                 units="V",
                 min_val=-10.0,
@@ -153,7 +153,7 @@ class TestAOTaskConfigRoundTrip:
     """Test TOML config persistence for AOTask."""
 
     def test_ao_save_config_produces_valid_toml(
-        self, simulated_device_name, sim_device_index, tmp_path
+        self, simulated_device_name, sim_device_name, tmp_path
     ):
         """Test that AOTask.save_config() produces a valid TOML file.
 
@@ -163,7 +163,7 @@ class TestAOTaskConfigRoundTrip:
         try:
             ao_task.add_channel(
                 "ao0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 min_val=-5.0,
                 max_val=5.0,
@@ -193,7 +193,7 @@ class TestAOTaskConfigRoundTrip:
         finally:
             ao_task.clear_task()
 
-    def test_ao_from_config_round_trip(self, simulated_device_name, sim_device_index, tmp_path):
+    def test_ao_from_config_round_trip(self, simulated_device_name, sim_device_name, tmp_path):
         """Test AOTask.from_config() round-trip.
 
         Creates AOTask, saves, loads, verifies attributes match.
@@ -203,7 +203,7 @@ class TestAOTaskConfigRoundTrip:
         try:
             ao_task_orig.add_channel(
                 "output0",
-                device_ind=sim_device_index,
+                device=sim_device_name,
                 channel_ind=0,
                 min_val=-10.0,
                 max_val=10.0,
