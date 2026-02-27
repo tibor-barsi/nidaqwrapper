@@ -31,9 +31,9 @@ from nidaqwrapper import AITask, DAQHandler
 
 # Define an analog input task with two accelerometer channels
 task = AITask('vibration_test', sample_rate=25600)
-task.add_channel('accel_x', device_ind=0, channel_ind=0,
+task.add_channel('accel_x', device="Dev1", channel_ind=0,
                  sensitivity=100, sensitivity_units='mV/g', units='g')
-task.add_channel('accel_y', device_ind=0, channel_ind=1,
+task.add_channel('accel_y', device="Dev1", channel_ind=1,
                  sensitivity=100, sensitivity_units='mV/g', units='g')
 
 # Use DAQHandler for triggered acquisition
@@ -104,7 +104,7 @@ import numpy as np
 from nidaqwrapper import AOTask
 
 task = AOTask('sig_gen', sample_rate=10000)
-task.add_channel('ao_0', device_ind=0, channel_ind=0)
+task.add_channel('ao_0', device="Dev1", channel_ind=0)
 task.configure()
 task.start()
 
@@ -122,7 +122,7 @@ from nidaqwrapper import AITask
 
 # Save task configuration
 task = AITask('vibration', sample_rate=25600)
-task.add_channel('ch0', device_ind=0, channel_ind=0,
+task.add_channel('ch0', device="Dev1", channel_ind=0,
                  sensitivity=100, sensitivity_units='mV/g', units='g')
 task.save_config('vibration.toml')
 task.clear_task()
