@@ -2088,9 +2088,15 @@ class TestFromTask:
         mock_ni_task.channel_names = ["accel_x", "accel_y"]
         mock_ni_task.is_task_done.return_value = True
 
+        mock_dev1 = MagicMock()
+        mock_dev1.name = "cDAQ1Mod1"
+        mock_dev1.product_type = "NI 9234"
+        mock_dev2 = MagicMock()
+        mock_dev2.name = "cDAQ1Mod2"
+        mock_dev2.product_type = "NI 9263"
+        mock_ni_task.devices = [mock_dev1, mock_dev2]
+
         with (
-            patch("nidaqwrapper.ai_task.nidaqmx.system.System.local",
-                  return_value=system),
             patch("nidaqwrapper.ai_task.UNITS", MOCK_UNITS),
             patch("nidaqwrapper.ai_task.constants", mock_constants),
         ):

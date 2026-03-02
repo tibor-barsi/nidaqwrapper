@@ -666,9 +666,8 @@ class AITask(BaseTask):
         instance = object.__new__(cls)
 
         # Populate all instance attributes by reading from the live task
-        system = nidaqmx.system.System.local()
-        instance.device_list = [d.name for d in system.devices]
-        instance.device_product_type = [d.product_type for d in system.devices]
+        instance.device_list = [d.name for d in task.devices]
+        instance.device_product_type = [d.product_type for d in task.devices]
 
         instance.task = task
         instance.task_name = task.name

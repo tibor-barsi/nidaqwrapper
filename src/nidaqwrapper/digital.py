@@ -463,9 +463,8 @@ class DITask(BaseTask):
             instance.sample_rate = None
             instance.mode = "on_demand"
 
-        # Discover devices
-        system = nidaqmx.system.System.local()
-        instance.device_list = [dev.name for dev in system.devices]
+        # Derive device info from the task itself
+        instance.device_list = [dev.name for dev in task.devices]
 
         # Set ownership: True transfers full control, False preserves external ownership
         instance._owns_task = take_ownership
@@ -850,9 +849,8 @@ class DOTask(BaseTask):
             instance.sample_rate = None
             instance.mode = "on_demand"
 
-        # Discover devices
-        system = nidaqmx.system.System.local()
-        instance.device_list = [dev.name for dev in system.devices]
+        # Derive device info from the task itself
+        instance.device_list = [dev.name for dev in task.devices]
 
         # Set ownership: True transfers full control, False preserves external ownership
         instance._owns_task = take_ownership

@@ -499,10 +499,9 @@ class AOTask(BaseTask):
         instance.samples_per_channel = task.timing.samp_quant_samp_per_chan
         instance.sample_mode = task.timing.samp_quant_samp_mode
 
-        # Discover system devices (needed for potential device lookups)
-        system = nidaqmx.system.System.local()
-        instance.device_list = [dev.name for dev in system.devices]
-        instance.device_product_type = [dev.product_type for dev in system.devices]
+        # Derive device info from the task itself
+        instance.device_list = [dev.name for dev in task.devices]
+        instance.device_product_type = [dev.product_type for dev in task.devices]
 
         # Set ownership: True transfers full control, False preserves external ownership
         instance._owns_task = take_ownership
